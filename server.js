@@ -7,6 +7,8 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const moment = require('moment');
+const { OAuth2Client } = require('google-auth-library');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
@@ -17,8 +19,21 @@ const io = socketIo(server, {
   }
 });
 
+// Google OAuth Configuration
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '960526558312-71hbbd2t528lu2sstpg0vs1t9vek3.apps.googleusercontent.com';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:3000', 'https://quantumcoin.com.ng', 'http://localhost:5500'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Handle preflight requests
+app.options('*', cors());
+
 app.use(express.json());
 
 // API Health Check
@@ -52,6 +67,7 @@ function initDatabase() {
       password TEXT NOT NULL,
       funding_balance REAL DEFAULT 3506.83,
       demo_balance REAL DEFAULT 100000.00,
+      google_id TEXT UNIQUE,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_login DATETIME,
       is_active BOOLEAN DEFAULT 1
@@ -249,7 +265,7 @@ const dbQuery = {
 };
 
 // JWT Secret
-const JWT_SECRET = 'quantumcoin-jwt-secret-2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'quantumcoin-jwt-secret-2024';
 
 // Market Data Simulation
 let cryptoData = {
@@ -365,7 +381,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    const user = await dbQuery.get('SELECT * FROM users WHERE username = ?', [username]);
+    const user = await dbQuery.get('SELECT * FROM users WHERE username = ? OR email = ?', [username, username]);
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -379,7 +395,7 @@ app.post('/api/auth/login', async (req, res) => {
     await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
     
     const token = jwt.sign(
-      { id: user.id, username: user.username, isAdmin: false },
+      { id: user.id, username: user.username, email: user.email, isAdmin: false },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -412,6 +428,10 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
     
+    if (!email.includes('@')) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+    
     const hashedPassword = bcrypt.hashSync(password, 10);
     
     const result = await dbQuery.run(
@@ -420,7 +440,7 @@ app.post('/api/auth/register', async (req, res) => {
     );
     
     const token = jwt.sign(
-      { id: result.id, username: username, isAdmin: false },
+      { id: result.id, username: username, email: email, isAdmin: false },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -439,11 +459,12 @@ app.post('/api/auth/register', async (req, res) => {
     if (error.code === 'SQLITE_CONSTRAINT') {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
+    console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed' });
   }
 });
 
-// Google Auth Route
+// Google Auth Route - PROPER IMPLEMENTATION
 app.post('/api/auth/google', async (req, res) => {
   try {
     const { credential } = req.body;
@@ -452,38 +473,73 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(400).json({ error: 'Google credential required' });
     }
     
-    // For demo purposes - create a user
-    const email = `google_${Date.now()}@quantumcoin.com`;
-    const username = `google_user_${Date.now().toString().slice(-6)}`;
+    console.log('Verifying Google token...');
     
-    // Check if user exists
-    const existingUser = await dbQuery.get(
-      'SELECT * FROM users WHERE email LIKE ?',
-      [`google_%@quantumcoin.com`]
-    );
+    // Verify Google token with Google's servers
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID,
+    });
     
-    let user;
-    if (existingUser) {
-      user = existingUser;
-    } else {
-      // Create new user
-      const hashedPassword = bcrypt.hashSync(Date.now().toString(), 10);
+    const payload = ticket.getPayload();
+    const { email, name, sub: googleId, picture } = payload;
+    
+    console.log('Google payload received:', { email, name, googleId });
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email not provided by Google' });
+    }
+    
+    // Check if user exists by email
+    let user = await dbQuery.get('SELECT * FROM users WHERE email = ?', [email]);
+    
+    if (!user) {
+      // Generate username from email
+      let username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '');
+      
+      // Check if username already exists
+      const existingUsername = await dbQuery.get('SELECT * FROM users WHERE username = ?', [username]);
+      if (existingUsername) {
+        username = `${username}_${Date.now().toString().slice(-4)}`;
+      }
+      
+      // Create a secure password for Google users
+      const hashedPassword = bcrypt.hashSync(googleId + Date.now().toString() + email, 10);
+      
+      console.log('Creating new user for Google login:', { username, email });
+      
       const result = await dbQuery.run(
-        'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
-        [username, email, hashedPassword, 3506.83, 100000.00]
+        `INSERT INTO users (username, email, password, google_id, funding_balance, demo_balance) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [username, email, hashedPassword, googleId, 3506.83, 100000.00]
       );
       
       user = await dbQuery.get('SELECT * FROM users WHERE id = ?', [result.id]);
+    } else if (!user.google_id) {
+      // Update existing user with Google ID
+      await dbQuery.run(
+        'UPDATE users SET google_id = ? WHERE id = ?',
+        [googleId, user.id]
+      );
     }
     
     // Update last login
     await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
     
+    // Create JWT token
     const token = jwt.sign(
-      { id: user.id, username: user.username, isAdmin: false },
+      { 
+        id: user.id, 
+        username: user.username, 
+        email: user.email, 
+        isAdmin: false,
+        googleId: user.google_id 
+      },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
+    
+    console.log('Google authentication successful for user:', user.username);
     
     res.json({
       token,
@@ -491,6 +547,8 @@ app.post('/api/auth/google', async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        name: name || user.username,
+        picture: picture || null,
         funding_balance: user.funding_balance,
         demo_balance: user.demo_balance
       }
@@ -498,7 +556,16 @@ app.post('/api/auth/google', async (req, res) => {
     
   } catch (error) {
     console.error('Google auth error:', error);
-    res.status(500).json({ error: 'Google authentication failed' });
+    
+    if (error.message.includes('Token used too late')) {
+      return res.status(401).json({ error: 'Google token expired. Please try again.' });
+    }
+    
+    if (error.message.includes('Invalid token')) {
+      return res.status(401).json({ error: 'Invalid Google token. Please try again.' });
+    }
+    
+    res.status(500).json({ error: 'Google authentication failed. Please try again.' });
   }
 });
 
@@ -521,6 +588,7 @@ app.get('/api/auth/profile', authenticateToken, async (req, res) => {
     
     res.json(user);
   } catch (error) {
+    console.error('Profile fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch profile' });
   }
 });
@@ -564,6 +632,7 @@ app.get('/api/market/chart/:symbol/:timeframe', (req, res) => {
     const data = generateChartData(symbol, timeframe);
     res.json(data);
   } catch (error) {
+    console.error('Chart data error:', error);
     res.status(500).json({ error: 'Failed to generate chart data' });
   }
 });
@@ -593,6 +662,7 @@ app.get('/api/portfolio', authenticateToken, async (req, res) => {
     
     res.json(updatedPortfolio);
   } catch (error) {
+    console.error('Portfolio fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch portfolio' });
   }
 });
@@ -609,6 +679,7 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
     );
     res.json(transactions);
   } catch (error) {
+    console.error('Transactions fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch transactions' });
   }
 });
@@ -643,6 +714,7 @@ app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
       totalAmount: amount + bonus
     });
   } catch (error) {
+    console.error('Deposit error:', error);
     res.status(500).json({ error: 'Failed to create deposit request' });
   }
 });
@@ -702,6 +774,7 @@ app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
       funding_balance: updatedUser.funding_balance
     });
   } catch (error) {
+    console.error('Withdrawal error:', error);
     res.status(500).json({ error: 'Failed to create withdrawal request' });
   }
 });
@@ -862,6 +935,7 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
     );
     res.json(users);
   } catch (error) {
+    console.error('Admin users fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
@@ -888,6 +962,7 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
     
     res.json(stats);
   } catch (error) {
+    console.error('Admin stats error:', error);
     res.status(500).json({ error: 'Failed to fetch dashboard stats' });
   }
 });
@@ -903,6 +978,7 @@ app.get('/api/admin/transactions/pending', authenticateAdmin, async (req, res) =
     );
     res.json(transactions);
   } catch (error) {
+    console.error('Admin pending transactions error:', error);
     res.status(500).json({ error: 'Failed to fetch pending transactions' });
   }
 });
@@ -920,6 +996,7 @@ app.get('/api/admin/transactions/completed', authenticateAdmin, async (req, res)
     );
     res.json(transactions);
   } catch (error) {
+    console.error('Admin completed transactions error:', error);
     res.status(500).json({ error: 'Failed to fetch completed transactions' });
   }
 });
@@ -958,6 +1035,7 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
     
     res.json({ success: true, message: 'Transaction approved' });
   } catch (error) {
+    console.error('Admin approve transaction error:', error);
     res.status(500).json({ error: 'Failed to approve transaction' });
   }
 });
@@ -996,6 +1074,7 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
     
     res.json({ success: true, message: 'Transaction rejected' });
   } catch (error) {
+    console.error('Admin reject transaction error:', error);
     res.status(500).json({ error: 'Failed to reject transaction' });
   }
 });
@@ -1008,6 +1087,7 @@ app.get('/api/chat/history', async (req, res) => {
     );
     res.json(messages.reverse());
   } catch (error) {
+    console.error('Chat history error:', error);
     res.status(500).json({ error: 'Failed to fetch chat history' });
   }
 });
@@ -1113,6 +1193,7 @@ initDatabase();
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 QuantumCoin API running on port ${PORT}`);
+  console.log(`🔐 Google OAuth configured with Client ID: ${GOOGLE_CLIENT_ID}`);
   console.log(`📊 Admin login: admin / admin123`);
   console.log(`👤 User login: testuser / password123`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
