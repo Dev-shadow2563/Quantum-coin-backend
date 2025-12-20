@@ -1,7 +1,7 @@
 {
-  "name": "quantumcoin-trading",
+  "name": "quantumcoin-api",
   "version": "1.0.0",
-  "description": "Cryptocurrency Trading Platform with Admin Panel",
+  "description": "QuantumCoin Cryptocurrency Trading Platform API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,8 +14,7 @@
     "cors": "^2.8.5",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
-    "moment": "^2.29.4",
-    "node-cron": "^3.0.3"
+    "moment": "^2.29.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
