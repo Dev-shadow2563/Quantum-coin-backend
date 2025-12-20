@@ -1,13 +1,12 @@
+// server.js - QuantumCoin API Backend
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const moment = require('moment');
-const cron = require('node-cron');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,91 +20,108 @@ const io = socketIo(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+
+// API Health Check
+app.get('/api', (req, res) => {
+  res.json({
+    status: "OK",
+    message: "QuantumCoin API is running 🚀",
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: "/api/auth",
+      market: "/api/market",
+      trade: "/api/trade",
+      transactions: "/api/transactions",
+      portfolio: "/api/portfolio",
+      admin: "/api/admin"
+    }
+  });
+});
 
 // Database setup
-const db = new sqlite3.Database('./quantumcoin.db');
+const db = new sqlite3.Database(':memory:'); // Use in-memory for simplicity
 
 // Initialize database
-db.serialize(() => {
-  // Users table
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    funding_balance REAL DEFAULT 3506.83,
-    demo_balance REAL DEFAULT 100000.00,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_login DATETIME,
-    is_active BOOLEAN DEFAULT 1
-  )`);
+function initDatabase() {
+  db.serialize(() => {
+    // Users table
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      funding_balance REAL DEFAULT 3506.83,
+      demo_balance REAL DEFAULT 100000.00,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_login DATETIME,
+      is_active BOOLEAN DEFAULT 1
+    )`);
 
-  // Transactions table
-  db.run(`CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    type TEXT NOT NULL,
-    amount REAL NOT NULL,
-    currency TEXT DEFAULT 'USD',
-    status TEXT DEFAULT 'pending',
-    network TEXT,
-    wallet_address TEXT,
-    transaction_hash TEXT,
-    fees REAL DEFAULT 0,
-    bonus REAL DEFAULT 0,
-    admin_approved BOOLEAN DEFAULT 0,
-    admin_id INTEGER,
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME,
-    FOREIGN KEY (user_id) REFERENCES users (id)
-  )`);
+    // Transactions table
+    db.run(`CREATE TABLE IF NOT EXISTS transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT DEFAULT 'USD',
+      status TEXT DEFAULT 'pending',
+      network TEXT,
+      wallet_address TEXT,
+      transaction_hash TEXT,
+      fees REAL DEFAULT 0,
+      bonus REAL DEFAULT 0,
+      admin_approved BOOLEAN DEFAULT 0,
+      admin_id INTEGER,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
 
-  // Portfolio table
-  db.run(`CREATE TABLE IF NOT EXISTS portfolio (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    coin_symbol TEXT NOT NULL,
-    amount REAL NOT NULL,
-    purchase_price REAL NOT NULL,
-    current_value REAL,
-    profit_loss REAL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME,
-    FOREIGN KEY (user_id) REFERENCES users (id)
-  )`);
+    // Portfolio table
+    db.run(`CREATE TABLE IF NOT EXISTS portfolio (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      coin_symbol TEXT NOT NULL,
+      amount REAL NOT NULL,
+      purchase_price REAL NOT NULL,
+      current_value REAL,
+      profit_loss REAL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
 
-  // Chat messages table
-  db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    username TEXT NOT NULL,
-    message TEXT NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (id)
-  )`);
+    // Chat messages table
+    db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      message TEXT NOT NULL,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
 
-  // Admin users table
-  db.run(`CREATE TABLE IF NOT EXISTS admins (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+    // Admin users table
+    db.run(`CREATE TABLE IF NOT EXISTS admins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
 
-  // Insert default admin if not exists
-  const adminPassword = bcrypt.hashSync('admin123', 10);
-  db.run(`INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
-    ['admin', adminPassword]);
+    // Insert default admin if not exists
+    const adminPassword = bcrypt.hashSync('admin123', 10);
+    db.run(`INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
+      ['admin', adminPassword]);
 
-  // Insert default user if not exists
-  const userPassword = bcrypt.hashSync('password123', 10);
-  db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-    ['testuser', 'test@quantumcoin.com', userPassword, 5000, 100000]);
+    // Insert default user if not exists
+    const userPassword = bcrypt.hashSync('password123', 10);
+    db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
+      ['testuser', 'test@quantumcoin.com', userPassword, 5000, 100000]);
 
-  // Insert initial chat messages
-  const initialMessages = [
+    // Insert initial chat messages
+    const initialMessages = [
   [1, 'AltcoinAce', 'Just closed a $320 profit on SOL. Loving the speed!'],
   [1, 'BlockMaster', 'Charts load instantly, very smooth experience'],
   [1, 'CryptoWolf', 'Withdrew $1,200 today, no stress at all'],
@@ -191,13 +207,46 @@ db.serialize(() => {
   [1, 'CoinMaster', 'Feels like a pro exchange'],
   [1, 'TradeVision', 'Clear vision on every trade'],
   [1, 'CryptoPath', 'Best path for serious traders']
-],
+]
 
-  db.run(`DELETE FROM chat_messages`);
-  initialMessages.forEach(msg => {
-    db.run(`INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)`, msg);
+    db.run(`DELETE FROM chat_messages`);
+    initialMessages.forEach(msg => {
+      db.run(`INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)`, msg);
+    });
+    
+    console.log('✅ Database initialized');
   });
-});
+}
+
+// Database helper functions
+const dbQuery = {
+  get: (sql, params = []) => {
+    return new Promise((resolve, reject) => {
+      db.get(sql, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  },
+  
+  all: (sql, params = []) => {
+    return new Promise((resolve, reject) => {
+      db.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+  },
+  
+  run: (sql, params = []) => {
+    return new Promise((resolve, reject) => {
+      db.run(sql, params, function(err) {
+        if (err) reject(err);
+        else resolve({ id: this.lastID, changes: this.changes });
+      });
+    });
+  }
+};
 
 // JWT Secret
 const JWT_SECRET = 'quantumcoin-jwt-secret-2024';
@@ -274,7 +323,7 @@ function authenticateToken(req, res, next) {
   const token = req.headers['authorization']?.split(' ')[1];
   
   if (!token) {
-    return res.status(401).json({ error: 'Access denied' });
+    return res.status(401).json({ error: 'Access denied. No token provided.' });
   }
   
   try {
@@ -282,11 +331,10 @@ function authenticateToken(req, res, next) {
     req.user = user;
     next();
   } catch (error) {
-    res.status(403).json({ error: 'Invalid token' });
+    res.status(403).json({ error: 'Invalid or expired token' });
   }
 }
 
-// Admin authentication middleware
 function authenticateAdmin(req, res, next) {
   const token = req.headers['authorization']?.split(' ')[1];
   
@@ -306,14 +354,20 @@ function authenticateAdmin(req, res, next) {
   }
 }
 
-// Routes
+// ==================== API ROUTES ====================
 
-// User login
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  
-  db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-    if (err || !user) {
+// AUTH ROUTES
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    
+    const user = await dbQuery.get('SELECT * FROM users WHERE username = ?', [username]);
+    
+    if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
@@ -322,8 +376,7 @@ app.post('/api/login', (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Update last login
-    db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+    await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
     
     const token = jwt.sign(
       { id: user.id, username: user.username, isAdmin: false },
@@ -341,56 +394,62 @@ app.post('/api/login', (req, res) => {
         demo_balance: user.demo_balance
       }
     });
-  });
-});
-
-// User registration
-app.post('/api/register', (req, res) => {
-  const { username, email, password } = req.body;
-  
-  if (!username || !email || !password) {
-    return res.status(400).json({ error: 'All fields are required' });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  
-  const hashedPassword = bcrypt.hashSync(password, 10);
-  
-  db.run(
-    'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
-    [username, email, hashedPassword],
-    function(err) {
-      if (err) {
-        if (err.code === 'SQLITE_CONSTRAINT') {
-          return res.status(400).json({ error: 'Username or email already exists' });
-        }
-        return res.status(500).json({ error: 'Registration failed' });
-      }
-      
-      const token = jwt.sign(
-        { id: this.lastID, username: username, isAdmin: false },
-        JWT_SECRET,
-        { expiresIn: '24h' }
-      );
-      
-      res.json({
-        token,
-        user: {
-          id: this.lastID,
-          username,
-          email,
-          funding_balance: 3506.83,
-          demo_balance: 100000.00
-        }
-      });
-    }
-  );
 });
 
-// Admin login
-app.post('/api/admin/login', (req, res) => {
-  const { username, password } = req.body;
-  
-  db.get('SELECT * FROM admins WHERE username = ?', [username], (err, admin) => {
-    if (err || !admin) {
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    
+    const result = await dbQuery.run(
+      'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
+      [username, email, hashedPassword]
+    );
+    
+    const token = jwt.sign(
+      { id: result.id, username: username, isAdmin: false },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.status(201).json({
+      token,
+      user: {
+        id: result.id,
+        username,
+        email,
+        funding_balance: 3506.83,
+        demo_balance: 100000.00
+      }
+    });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({ error: 'Username or email already exists' });
+    }
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/api/auth/admin/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    const admin = await dbQuery.get('SELECT * FROM admins WHERE username = ?', [username]);
+    
+    if (!admin) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
@@ -405,588 +464,520 @@ app.post('/api/admin/login', (req, res) => {
       { expiresIn: '24h' }
     );
     
-  res.json({ token, admin: { id: admin.id, username: admin.username } });
-  });
+    res.json({ token, admin: { id: admin.id, username: admin.username } });
+  } catch (error) {
+    console.error('Admin login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-// Get market data
-app.get('/api/market-data', (req, res) => {
+// MARKET DATA ROUTES
+app.get('/api/market/data', (req, res) => {
   res.json(cryptoData);
 });
 
-// Get chart data
-app.get('/api/chart-data/:symbol/:timeframe', (req, res) => {
-  const { symbol, timeframe } = req.params;
-  const data = generateChartData(symbol, timeframe);
-  res.json(data);
+app.get('/api/market/chart/:symbol/:timeframe', (req, res) => {
+  try {
+    const { symbol, timeframe } = req.params;
+    const data = generateChartData(symbol, timeframe);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to generate chart data' });
+  }
 });
 
-// Get user portfolio
-app.get('/api/portfolio', authenticateToken, (req, res) => {
-  db.all(
-    'SELECT * FROM portfolio WHERE user_id = ?',
-    [req.user.id],
-    (err, portfolio) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(portfolio);
-    }
-  );
-});
-
-// Get user transactions
-app.get('/api/transactions', authenticateToken, (req, res) => {
-  db.all(
-    `SELECT * FROM transactions 
-     WHERE user_id = ? 
-     ORDER BY created_at DESC 
-     LIMIT 10`,
-    [req.user.id],
-    (err, transactions) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(transactions);
-    }
-  );
-});
-
-// Create deposit request
-app.post('/api/deposit', authenticateToken, (req, res) => {
-  const { amount } = req.body;
-  
-  if (amount < 10) {
-    return res.status(400).json({ error: 'Minimum deposit is $10' });
-  }
-  
-  if (amount > 100000) {
-    return res.status(400).json({ error: 'Maximum deposit is $100,000' });
-  }
-  
-  const bonus = amount >= 1000 ? amount * 0.05 : 0;
-  
-  db.run(
-    `INSERT INTO transactions 
-     (user_id, type, amount, bonus, status, created_at) 
-     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-    [req.user.id, 'deposit', amount, bonus, 'pending'],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to create deposit request' });
-      }
-      
-      res.json({
-        success: true,
-        message: 'Deposit request submitted',
-        transactionId: this.lastID,
-        amount,
-        bonus,
-        totalAmount: amount + bonus
-      });
-    }
-  );
-});
-
-// Create withdrawal request
-app.post('/api/withdraw', authenticateToken, (req, res) => {
-  const { amount, network, wallet_address } = req.body;
-  
-  // Validate
-  if (amount < 10) {
-    return res.status(400).json({ error: 'Minimum withdrawal is $10' });
-  }
-  
-  if (amount > 50000) {
-    return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
-  }
-  
-  // Check user balance
-  db.get(
-    'SELECT funding_balance FROM users WHERE id = ?',
-    [req.user.id],
-    (err, user) => {
-      if (err || !user) {
-        return res.status(500).json({ error: 'User not found' });
-      }
-      
-      if (user.funding_balance < amount) {
-        return res.status(400).json({ error: 'Insufficient balance' });
-      }
-      
-      const fees = {
-        'BTC': 3.00,
-        'ETH': 8.00,
-        'USDT': 1.00
-      }[network] || 3.00;
-      
-      const processingFee = amount * 0.01;
-      const totalFees = processingFee + fees;
-      const receiveAmount = amount - totalFees;
-      
-      db.run(
-        `INSERT INTO transactions 
-         (user_id, type, amount, fees, status, network, wallet_address, created_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-        [req.user.id, 'withdrawal', amount, totalFees, 'pending', network, wallet_address],
-        function(err) {
-          if (err) {
-            return res.status(500).json({ error: 'Failed to create withdrawal request' });
-          }
-          
-          // Deduct from balance immediately
-          db.run(
-            'UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?',
-            [amount, req.user.id]
-          );
-          
-          // Update user in database
-          db.get('SELECT * FROM users WHERE id = ?', [req.user.id], (err, updatedUser) => {
-            if (!err && updatedUser) {
-              io.to(`user_${req.user.id}`).emit('balance_update', {
-                funding_balance: updatedUser.funding_balance
-              });
-            }
-          });
-          
-          res.json({
-            success: true,
-            message: 'Withdrawal request submitted',
-            transactionId: this.lastID,
-            amount,
-            fees: totalFees,
-            receiveAmount
-          });
-        }
-      );
-    }
-  );
-});
-
-// Execute trade
-app.post('/api/trade', authenticateToken, (req, res) => {
-  const { type, symbol, amount, account_type } = req.body;
-  const price = cryptoData[symbol]?.price;
-  
-  if (!price) {
-    return res.status(400).json({ error: 'Invalid symbol' });
-  }
-  
-  if (amount <= 0) {
-    return res.status(400).json({ error: 'Invalid amount' });
-  }
-  
-  const balanceColumn = account_type === 'demo' ? 'demo_balance' : 'funding_balance';
-  const fee = amount * 0.001;
-  
-  if (type === 'buy') {
-    const totalCost = amount;
-    
-    db.get(
-      `SELECT ${balanceColumn} as balance FROM users WHERE id = ?`,
-      [req.user.id],
-      (err, user) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (user.balance < totalCost) {
-          return res.status(400).json({ error: 'Insufficient balance' });
-        }
-        
-        const coinAmount = (totalCost - fee) / price;
-        
-        // Update balance
-        db.run(
-          `UPDATE users SET ${balanceColumn} = ${balanceColumn} - ? WHERE id = ?`,
-          [totalCost, req.user.id]
-        );
-        
-        // Add to portfolio or update existing
-        db.get(
-          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ?',
-          [req.user.id, symbol],
-          (err, existing) => {
-            if (err) {
-              return res.status(500).json({ error: 'Database error' });
-            }
-            
-            if (existing) {
-              const newAmount = existing.amount + coinAmount;
-              const avgPrice = ((existing.amount * existing.purchase_price) + (coinAmount * price)) / newAmount;
-              
-              db.run(
-                `UPDATE portfolio SET 
-                 amount = ?,
-                 purchase_price = ?,
-                 current_value = ? * ?,
-                 updated_at = CURRENT_TIMESTAMP
-                 WHERE id = ?`,
-                [newAmount, avgPrice, newAmount, price, existing.id]
-              );
-            } else {
-              db.run(
-                `INSERT INTO portfolio 
-                 (user_id, coin_symbol, amount, purchase_price, current_value) 
-                 VALUES (?, ?, ?, ?, ?)`,
-                [req.user.id, symbol, coinAmount, price, coinAmount * price]
-              );
-            }
-            
-            // Record transaction
-            db.run(
-              `INSERT INTO transactions 
-               (user_id, type, amount, fees, status, created_at) 
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-              [req.user.id, 'buy', totalCost, fee, 'completed']
-            );
-            
-            // Get updated user data
-            db.get('SELECT * FROM users WHERE id = ?', [req.user.id], (err, updatedUser) => {
-              if (!err && updatedUser) {
-                io.to(`user_${req.user.id}`).emit('balance_update', {
-                  funding_balance: updatedUser.funding_balance,
-                  demo_balance: updatedUser.demo_balance
-                });
-                
-                res.json({
-                  success: true,
-                  message: `Bought ${coinAmount.toFixed(6)} ${symbol}`,
-                  coinAmount,
-                  totalCost,
-                  newBalance: updatedUser[balanceColumn]
-                });
-              }
-            });
-          }
-        );
-      }
+// PORTFOLIO ROUTES
+app.get('/api/portfolio', authenticateToken, async (req, res) => {
+  try {
+    const portfolio = await dbQuery.all(
+      'SELECT * FROM portfolio WHERE user_id = ?',
+      [req.user.id]
     );
     
-  } else if (type === 'sell') {
-    // Sell logic
-    db.get(
-      'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ?',
-      [req.user.id, symbol],
-      (err, holding) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (!holding || holding.amount < amount) {
-          return res.status(400).json({ error: 'Insufficient coins' });
-        }
-        
-        const totalValue = amount * price;
-        const receiveAmount = totalValue - fee;
-        
-        // Update portfolio
-        if (holding.amount === amount) {
-          db.run('DELETE FROM portfolio WHERE id = ?', [holding.id]);
-        } else {
-          const newAmount = holding.amount - amount;
-          db.run(
-            'UPDATE portfolio SET amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [newAmount, holding.id]
-          );
-        }
-        
-        // Update balance (always goes to funding account)
-        db.run(
-          'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
-          [receiveAmount, req.user.id]
-        );
-        
-        // Record transaction
-        db.run(
-          `INSERT INTO transactions 
-           (user_id, type, amount, fees, status, created_at) 
-           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-          [req.user.id, 'sell', receiveAmount, fee, 'completed']
-        );
-        
-        // Get updated user data
-        db.get('SELECT * FROM users WHERE id = ?', [req.user.id], (err, updatedUser) => {
-          if (!err && updatedUser) {
-            io.to(`user_${req.user.id}`).emit('balance_update', {
-              funding_balance: updatedUser.funding_balance,
-              demo_balance: updatedUser.demo_balance
-            });
-            
-            res.json({
-              success: true,
-              message: `Sold ${amount} ${symbol} for $${receiveAmount.toFixed(2)}`,
-              receiveAmount,
-              newBalance: updatedUser.funding_balance
-            });
-          }
-        });
-      }
-    );
-  }
-});
-
-// Admin routes
-
-// Get all pending transactions
-app.get('/api/admin/transactions/pending', authenticateAdmin, (req, res) => {
-  db.all(
-    `SELECT t.*, u.username, u.email 
-     FROM transactions t 
-     JOIN users u ON t.user_id = u.id 
-     WHERE t.status = 'pending' 
-     ORDER BY t.created_at DESC`,
-    (err, transactions) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(transactions);
-    }
-  );
-});
-
-// Get all users
-app.get('/api/admin/users', authenticateAdmin, (req, res) => {
-  db.all(
-    `SELECT id, username, email, funding_balance, demo_balance, 
-            created_at, last_login, is_active 
-     FROM users 
-     ORDER BY created_at DESC`,
-    (err, users) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(users);
-    }
-  );
-});
-
-// Get dashboard stats
-app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
-  const queries = [
-    'SELECT COUNT(*) as total_users FROM users',
-    'SELECT COUNT(*) as active_today FROM users WHERE last_login > datetime("now", "-1 day")',
-    'SELECT SUM(funding_balance) as total_funding FROM users',
-    'SELECT SUM(demo_balance) as total_demo FROM users',
-    'SELECT COUNT(*) as pending_deposits FROM transactions WHERE type = "deposit" AND status = "pending"',
-    'SELECT SUM(amount) as pending_deposit_amount FROM transactions WHERE type = "deposit" AND status = "pending"',
-    'SELECT COUNT(*) as pending_withdrawals FROM transactions WHERE type = "withdrawal" AND status = "pending"',
-    'SELECT SUM(amount) as pending_withdrawal_amount FROM transactions WHERE type = "withdrawal" AND status = "pending"'
-  ];
-  
-  const stats = {};
-  
-  function executeQuery(index) {
-    if (index >= queries.length) {
-      res.json(stats);
-      return;
-    }
-    
-    db.get(queries[index], (err, result) => {
-      if (!err && result) {
-        Object.assign(stats, result);
-      }
-      executeQuery(index + 1);
+    const updatedPortfolio = portfolio.map(item => {
+      const currentPrice = cryptoData[item.coin_symbol]?.price || item.purchase_price;
+      const currentValue = item.amount * currentPrice;
+      const profitLoss = currentValue - (item.amount * item.purchase_price);
+      const profitLossPercent = ((profitLoss / (item.amount * item.purchase_price)) * 100);
+      
+      return {
+        ...item,
+        current_price: currentPrice,
+        current_value: currentValue,
+        profit_loss: profitLoss,
+        profit_loss_percent: profitLossPercent
+      };
     });
+    
+    res.json(updatedPortfolio);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch portfolio' });
+  }
+});
+
+// TRANSACTION ROUTES
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  try {
+    const transactions = await dbQuery.all(
+      `SELECT * FROM transactions 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 10`,
+      [req.user.id]
+    );
+    res.json(transactions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch transactions' });
+  }
+});
+
+app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    
+    if (amount < 10) {
+      return res.status(400).json({ error: 'Minimum deposit is $10' });
+    }
+    
+    if (amount > 100000) {
+      return res.status(400).json({ error: 'Maximum deposit is $100,000' });
+    }
+    
+    const bonus = amount >= 1000 ? amount * 0.05 : 0;
+    
+    const result = await dbQuery.run(
+      `INSERT INTO transactions 
+       (user_id, type, amount, bonus, status, created_at) 
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [req.user.id, 'deposit', amount, bonus, 'pending']
+    );
+    
+    res.json({
+      success: true,
+      message: 'Deposit request submitted',
+      transactionId: result.id,
+      amount,
+      bonus,
+      totalAmount: amount + bonus
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create deposit request' });
+  }
+});
+
+app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount, network, wallet_address } = req.body;
+    
+    if (amount < 10) {
+      return res.status(400).json({ error: 'Minimum withdrawal is $10' });
+    }
+    
+    if (amount > 50000) {
+      return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
+    }
+    
+    const user = await dbQuery.get(
+      'SELECT funding_balance FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (user.funding_balance < amount) {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+    
+    const fees = {
+      'BTC': 3.00,
+      'ETH': 8.00,
+      'USDT': 1.00
+    }[network] || 3.00;
+    
+    const processingFee = amount * 0.01;
+    const totalFees = processingFee + fees;
+    const receiveAmount = amount - totalFees;
+    
+    const result = await dbQuery.run(
+      `INSERT INTO transactions 
+       (user_id, type, amount, fees, status, network, wallet_address, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [req.user.id, 'withdrawal', amount, totalFees, 'pending', network, wallet_address]
+    );
+    
+    await dbQuery.run(
+      'UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?',
+      [amount, req.user.id]
+    );
+    
+    const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal request submitted',
+      transactionId: result.id,
+      amount,
+      fees: totalFees,
+      receiveAmount,
+      funding_balance: updatedUser.funding_balance
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create withdrawal request' });
+  }
+});
+
+// TRADE ROUTES
+app.post('/api/trade', authenticateToken, async (req, res) => {
+  try {
+    const { type, symbol, amount, account_type } = req.body;
+    const price = cryptoData[symbol]?.price;
+    
+    if (!price) {
+      return res.status(400).json({ error: 'Invalid symbol' });
+    }
+    
+    if (amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    
+    const balanceColumn = account_type === 'demo' ? 'demo_balance' : 'funding_balance';
+    const fee = amount * 0.001;
+    
+    if (type === 'buy') {
+      return await buyTrade(req, res, symbol, amount, price, balanceColumn, fee);
+    } else if (type === 'sell') {
+      return await sellTrade(req, res, symbol, amount, price, fee);
+    } else {
+      return res.status(400).json({ error: 'Invalid trade type' });
+    }
+  } catch (error) {
+    console.error('Trade error:', error);
+    res.status(500).json({ error: 'Trade execution failed' });
+  }
+});
+
+async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee) {
+  const totalCost = amount;
+  
+  const user = await dbQuery.get(
+    `SELECT ${balanceColumn} as balance FROM users WHERE id = ?`,
+    [req.user.id]
+  );
+  
+  if (user.balance < totalCost) {
+    return res.status(400).json({ error: 'Insufficient balance' });
   }
   
-  executeQuery(0);
-});
-
-// Get completed transactions
-app.get('/api/admin/transactions/completed', authenticateAdmin, (req, res) => {
-  db.all(
-    `SELECT t.*, u.username, u.email, a.username as admin_username
-     FROM transactions t 
-     JOIN users u ON t.user_id = u.id 
-     LEFT JOIN admins a ON t.admin_id = a.id
-     WHERE t.status IN ('completed', 'rejected')
-     ORDER BY t.completed_at DESC
-     LIMIT 50`,
-    (err, transactions) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(transactions);
-    }
-  );
-});
-
-// Approve transaction
-app.post('/api/admin/transactions/:id/approve', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
-  const { notes } = req.body;
+  const coinAmount = (totalCost - fee) / price;
   
-  db.get(
-    'SELECT * FROM transactions WHERE id = ?',
-    [id],
-    (err, transaction) => {
-      if (err || !transaction) {
-        return res.status(404).json({ error: 'Transaction not found' });
-      }
-      
-      if (transaction.type === 'deposit') {
-        // Add funds to user account (including bonus)
-        db.run(
-          `UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?`,
-          [transaction.amount + (transaction.bonus || 0), transaction.user_id]
-        );
-      }
-      // For withdrawals, funds were already deducted
-      
-      // Update transaction status
-      db.run(
-        `UPDATE transactions SET 
-         status = 'completed',
-         admin_approved = 1,
-         admin_id = ?,
-         notes = ?,
-         completed_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [req.admin.id, notes || 'Approved by admin', id],
-        function(err) {
-          if (err) {
-            return res.status(500).json({ error: 'Failed to approve transaction' });
-          }
-          
-          // Get updated user data
-          db.get('SELECT * FROM users WHERE id = ?', [transaction.user_id], (err, user) => {
-            if (!err && user) {
-              // Notify user via WebSocket
-              io.to(`user_${transaction.user_id}`).emit('transaction_approved', {
-                transactionId: id,
-                type: transaction.type,
-                amount: transaction.amount,
-                status: 'completed',
-                notes: notes || 'Approved by admin'
-              });
-              
-              io.to(`user_${transaction.user_id}`).emit('balance_update', {
-                funding_balance: user.funding_balance,
-                demo_balance: user.demo_balance
-              });
-            }
-          });
-          
-          res.json({ success: true, message: 'Transaction approved' });
-        }
+  await dbQuery.run(
+    `UPDATE users SET ${balanceColumn} = ${balanceColumn} - ? WHERE id = ?`,
+    [totalCost, req.user.id]
+  );
+  
+  const existing = await dbQuery.get(
+    'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ?',
+    [req.user.id, symbol]
+  );
+  
+  if (existing) {
+    const newAmount = existing.amount + coinAmount;
+    const avgPrice = ((existing.amount * existing.purchase_price) + (coinAmount * price)) / newAmount;
+    
+    await dbQuery.run(
+      `UPDATE portfolio SET 
+       amount = ?,
+       purchase_price = ?,
+       current_value = ? * ?,
+       updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [newAmount, avgPrice, newAmount, price, existing.id]
+    );
+  } else {
+    await dbQuery.run(
+      `INSERT INTO portfolio 
+       (user_id, coin_symbol, amount, purchase_price, current_value) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [req.user.id, symbol, coinAmount, price, coinAmount * price]
+    );
+  }
+  
+  await dbQuery.run(
+    `INSERT INTO transactions 
+     (user_id, type, amount, fees, status, created_at) 
+     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [req.user.id, 'buy', totalCost, fee, 'completed']
+  );
+  
+  const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+  
+  res.json({
+    success: true,
+    message: `Bought ${coinAmount.toFixed(6)} ${symbol}`,
+    coinAmount,
+    totalCost,
+    fee,
+    newBalance: updatedUser[balanceColumn],
+    funding_balance: updatedUser.funding_balance,
+    demo_balance: updatedUser.demo_balance
+  });
+}
+
+async function sellTrade(req, res, symbol, amount, price, fee) {
+  const holding = await dbQuery.get(
+    'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ?',
+    [req.user.id, symbol]
+  );
+  
+  if (!holding || holding.amount < amount) {
+    return res.status(400).json({ error: 'Insufficient coins' });
+  }
+  
+  const totalValue = amount * price;
+  const receiveAmount = totalValue - fee;
+  
+  if (holding.amount === amount) {
+    await dbQuery.run('DELETE FROM portfolio WHERE id = ?', [holding.id]);
+  } else {
+    const newAmount = holding.amount - amount;
+    await dbQuery.run(
+      'UPDATE portfolio SET amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [newAmount, holding.id]
+    );
+  }
+  
+  await dbQuery.run(
+    'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
+    [receiveAmount, req.user.id]
+  );
+  
+  await dbQuery.run(
+    `INSERT INTO transactions 
+     (user_id, type, amount, fees, status, created_at) 
+     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [req.user.id, 'sell', receiveAmount, fee, 'completed']
+  );
+  
+  const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+  
+  res.json({
+    success: true,
+    message: `Sold ${amount} ${symbol} for $${receiveAmount.toFixed(2)}`,
+    receiveAmount,
+    fee,
+    newBalance: updatedUser.funding_balance,
+    funding_balance: updatedUser.funding_balance,
+    demo_balance: updatedUser.demo_balance
+  });
+}
+
+// ADMIN ROUTES
+app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
+  try {
+    const users = await dbQuery.all(
+      `SELECT id, username, email, funding_balance, demo_balance, 
+              created_at, last_login, is_active 
+       FROM users 
+       ORDER BY created_at DESC`
+    );
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const queries = [
+      'SELECT COUNT(*) as total_users FROM users',
+      'SELECT COUNT(*) as active_today FROM users WHERE last_login > datetime("now", "-1 day")',
+      'SELECT SUM(funding_balance) as total_funding FROM users',
+      'SELECT SUM(demo_balance) as total_demo FROM users',
+      'SELECT COUNT(*) as pending_deposits FROM transactions WHERE type = "deposit" AND status = "pending"',
+      'SELECT SUM(amount) as pending_deposit_amount FROM transactions WHERE type = "deposit" AND status = "pending"',
+      'SELECT COUNT(*) as pending_withdrawals FROM transactions WHERE type = "withdrawal" AND status = "pending"',
+      'SELECT SUM(amount) as pending_withdrawal_amount FROM transactions WHERE type = "withdrawal" AND status = "pending"'
+    ];
+    
+    const stats = {};
+    
+    for (const query of queries) {
+      const result = await dbQuery.get(query);
+      Object.assign(stats, result);
+    }
+    
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+  }
+});
+
+app.get('/api/admin/transactions/pending', authenticateAdmin, async (req, res) => {
+  try {
+    const transactions = await dbQuery.all(
+      `SELECT t.*, u.username, u.email 
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       WHERE t.status = 'pending' 
+       ORDER BY t.created_at DESC`
+    );
+    res.json(transactions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch pending transactions' });
+  }
+});
+
+app.get('/api/admin/transactions/completed', authenticateAdmin, async (req, res) => {
+  try {
+    const transactions = await dbQuery.all(
+      `SELECT t.*, u.username, u.email, a.username as admin_username
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       LEFT JOIN admins a ON t.admin_id = a.id
+       WHERE t.status IN ('completed', 'rejected')
+       ORDER BY t.completed_at DESC
+       LIMIT 50`
+    );
+    res.json(transactions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch completed transactions' });
+  }
+});
+
+app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+    
+    const transaction = await dbQuery.get(
+      'SELECT * FROM transactions WHERE id = ?',
+      [id]
+    );
+    
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    
+    if (transaction.type === 'deposit') {
+      await dbQuery.run(
+        `UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?`,
+        [transaction.amount + (transaction.bonus || 0), transaction.user_id]
       );
     }
-  );
+    
+    await dbQuery.run(
+      `UPDATE transactions SET 
+       status = 'completed',
+       admin_approved = 1,
+       admin_id = ?,
+       notes = ?,
+       completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [req.admin.id, notes || 'Approved by admin', id]
+    );
+    
+    res.json({ success: true, message: 'Transaction approved' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to approve transaction' });
+  }
 });
 
-// Reject transaction
-app.post('/api/admin/transactions/:id/reject', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
-  const { notes } = req.body;
-  
-  db.get(
-    'SELECT * FROM transactions WHERE id = ?',
-    [id],
-    (err, transaction) => {
-      if (err || !transaction) {
-        return res.status(404).json({ error: 'Transaction not found' });
-      }
-      
-      if (transaction.type === 'withdrawal') {
-        // Refund withdrawn amount
-        db.run(
-          'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
-          [transaction.amount, transaction.user_id]
-        );
-      }
-      
-      db.run(
-        `UPDATE transactions SET 
-         status = 'rejected',
-         admin_approved = 0,
-         admin_id = ?,
-         notes = ?,
-         completed_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [req.admin.id, notes || 'Rejected by admin', id],
-        function(err) {
-          if (err) {
-            return res.status(500).json({ error: 'Failed to reject transaction' });
-          }
-          
-          // Get updated user data
-          db.get('SELECT * FROM users WHERE id = ?', [transaction.user_id], (err, user) => {
-            if (!err && user) {
-              io.to(`user_${transaction.user_id}`).emit('transaction_rejected', {
-                transactionId: id,
-                type: transaction.type,
-                amount: transaction.amount,
-                status: 'rejected',
-                notes: notes || 'Rejected by admin'
-              });
-              
-              io.to(`user_${transaction.user_id}`).emit('balance_update', {
-                funding_balance: user.funding_balance,
-                demo_balance: user.demo_balance
-              });
-            }
-          });
-          
-          res.json({ success: true, message: 'Transaction rejected' });
-        }
+app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+    
+    const transaction = await dbQuery.get(
+      'SELECT * FROM transactions WHERE id = ?',
+      [id]
+    );
+    
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    
+    if (transaction.type === 'withdrawal') {
+      await dbQuery.run(
+        'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
+        [transaction.amount, transaction.user_id]
       );
     }
-  );
+    
+    await dbQuery.run(
+      `UPDATE transactions SET 
+       status = 'rejected',
+       admin_approved = 0,
+       admin_id = ?,
+       notes = ?,
+       completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [req.admin.id, notes || 'Rejected by admin', id]
+    );
+    
+    res.json({ success: true, message: 'Transaction rejected' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reject transaction' });
+  }
+});
+
+// CHAT ROUTES
+app.get('/api/chat/history', async (req, res) => {
+  try {
+    const messages = await dbQuery.all(
+      'SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT 50'
+    );
+    res.json(messages.reverse());
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch chat history' });
+  }
 });
 
 // WebSocket connections
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
   
-  // Join user room
   socket.on('join_user', (userId) => {
     socket.join(`user_${userId}`);
   });
   
-  // Join admin room
   socket.on('join_admin', () => {
     socket.join('admin_room');
   });
   
-  // Chat messages
-  socket.on('chat_message', (data) => {
+  socket.on('chat_message', async (data) => {
     const { userId, username, message } = data;
     
     if (!userId || !username || !message) {
       return;
     }
     
-    db.run(
-      'INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)',
-      [userId, username, message],
-      function(err) {
-        if (!err) {
-          const chatMessage = {
-            id: this.lastID,
-            userId,
-            username,
-            message,
-            timestamp: new Date().toISOString()
-          };
-          
-          // Broadcast to all connected clients
-          io.emit('new_chat_message', chatMessage);
-        }
-      }
-    );
+    try {
+      const result = await dbQuery.run(
+        'INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)',
+        [userId, username, message]
+      );
+      
+      const chatMessage = {
+        id: result.id,
+        userId,
+        username,
+        message,
+        timestamp: new Date().toISOString()
+      };
+      
+      io.emit('new_chat_message', chatMessage);
+    } catch (error) {
+      console.error('Chat message error:', error);
+    }
   });
   
-  // Get chat history
-  socket.on('get_chat_history', () => {
-    db.all(
-      'SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT 50',
-      (err, messages) => {
-        if (!err) {
-          socket.emit('chat_history', messages.reverse());
-        }
-      }
-    );
+  socket.on('get_chat_history', async () => {
+    try {
+      const messages = await dbQuery.all(
+        'SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT 50'
+      );
+      socket.emit('chat_history', messages.reverse());
+    } catch (error) {
+      console.error('Chat history error:', error);
+    }
   });
   
   socket.on('disconnect', () => {
@@ -994,32 +985,52 @@ io.on('connection', (socket) => {
   });
 });
 
-// Serve HTML files
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// 404 handler for API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ 
+    error: 'API endpoint not found',
+    available_endpoints: {
+      health: 'GET /api',
+      auth: {
+        login: 'POST /api/auth/login',
+        register: 'POST /api/auth/register',
+        admin_login: 'POST /api/auth/admin/login'
+      },
+      market: {
+        data: 'GET /api/market/data',
+        chart: 'GET /api/market/chart/:symbol/:timeframe'
+      },
+      portfolio: 'GET /api/portfolio (Auth)',
+      transactions: {
+        list: 'GET /api/transactions (Auth)',
+        deposit: 'POST /api/transactions/deposit (Auth)',
+        withdraw: 'POST /api/transactions/withdraw (Auth)'
+      },
+      trade: 'POST /api/trade (Auth)',
+      chat: 'GET /api/chat/history',
+      admin: 'Various routes (Admin Auth)'
+    }
+  });
 });
 
-app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    message: err.message
+  });
 });
 
-app.get('/deposit', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'deposit.html'));
-});
+// Initialize and start server
+initDatabase();
 
-app.get('/withdraw', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'withdraw.html'));
-});
-
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
-// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Admin login: admin / admin123`);
-  console.log(`User login: testuser / password123`);
-  console.log(`Access at: http://localhost:${PORT}`);
+  console.log(`🚀 QuantumCoin API running on port ${PORT}`);
+  console.log(`📊 Admin login: admin / admin123`);
+  console.log(`👤 User login: testuser / password123`);
+  console.log(`🔗 API available at: http://localhost:${PORT}/api`);
 });
+
+module.exports = { app, server };
