@@ -138,7 +138,7 @@ function initDatabase() {
   [1, 'HodlKing', 'Holding long-term, platform feels safe'],
   [1, 'GreenCandle', 'Account went green today, $340 up'],
   [1, 'RedCandle', 'Small loss today, but learned a lot'],
-  [1, 'TradeSensei', 'Best order execution I’ve seen'],
+  [1, 'TradeSensei', 'Best order execution I\'ve seen'],
   [1, 'CryptoNova', 'Withdrew $900 successfully'],
   [1, 'WhaleWatcher', 'Market depth feature is amazing'],
   [1, 'FastHands', 'Instant buy/sell, no lag'],
@@ -153,7 +153,7 @@ function initDatabase() {
   [1, 'ZenTrader', 'Calm trading experience, no clutter'],
   [1, 'FlashTrade', 'Executed trades instantly'],
   [1, 'CryptoSam', 'Made $260 flipping SOL'],
-  [1, 'BullishBob', 'Feeling bullish after today’s gains'],
+  [1, 'BullishBob', 'Feeling bullish after today\'s gains'],
   [1, 'SteadyEarner', 'Slow but steady $180 profit'],
   [1, 'NightTrader', 'Late-night trades worked out well'],
   [1, 'TokenFlip', 'Quick $75 flip'],
@@ -171,7 +171,7 @@ function initDatabase() {
   [1, 'ProfitStacker', 'Stacking profits daily'],
   [1, 'TradePilot', 'Navigation is super intuitive'],
   [1, 'SignalHunter', 'Signals helped a lot'],
-  [1, 'CryptoJet', 'Fastest platform I’ve used'],
+  [1, 'CryptoJet', 'Fastest platform I\'ve used'],
   [1, 'MarketAce', 'Market orders execute cleanly'],
   [1, 'CoinWizard', 'Feels like pro trading software'],
   [1, 'DeltaTrader', 'Delta tracking is accurate'],
@@ -440,6 +440,88 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
     res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Google Auth Route
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { credential } = req.body;
+    
+    if (!credential) {
+      return res.status(400).json({ error: 'Google credential required' });
+    }
+    
+    // For demo purposes - create a user
+    const email = `google_${Date.now()}@quantumcoin.com`;
+    const username = `google_user_${Date.now().toString().slice(-6)}`;
+    
+    // Check if user exists
+    const existingUser = await dbQuery.get(
+      'SELECT * FROM users WHERE email LIKE ?',
+      [`google_%@quantumcoin.com`]
+    );
+    
+    let user;
+    if (existingUser) {
+      user = existingUser;
+    } else {
+      // Create new user
+      const hashedPassword = bcrypt.hashSync(Date.now().toString(), 10);
+      const result = await dbQuery.run(
+        'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
+        [username, email, hashedPassword, 3506.83, 100000.00]
+      );
+      
+      user = await dbQuery.get('SELECT * FROM users WHERE id = ?', [result.id]);
+    }
+    
+    // Update last login
+    await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+    
+    const token = jwt.sign(
+      { id: user.id, username: user.username, isAdmin: false },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        funding_balance: user.funding_balance,
+        demo_balance: user.demo_balance
+      }
+    });
+    
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+});
+
+// Logout endpoint
+app.post('/api/auth/logout', (req, res) => {
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
+// User profile endpoint
+app.get('/api/auth/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await dbQuery.get(
+      'SELECT id, username, email, funding_balance, demo_balance, created_at, last_login FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch profile' });
   }
 });
 
@@ -994,6 +1076,9 @@ app.use('/api/*', (req, res) => {
       auth: {
         login: 'POST /api/auth/login',
         register: 'POST /api/auth/register',
+        google: 'POST /api/auth/google',
+        logout: 'POST /api/auth/logout',
+        profile: 'GET /api/auth/profile',
         admin_login: 'POST /api/auth/admin/login'
       },
       market: {
@@ -1031,6 +1116,7 @@ server.listen(PORT, () => {
   console.log(`📊 Admin login: admin / admin123`);
   console.log(`👤 User login: testuser / password123`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
+  console.log(`🌐 Frontend URL: https://quantumcoin.com.ng`);
 });
 
 module.exports = { app, server };
