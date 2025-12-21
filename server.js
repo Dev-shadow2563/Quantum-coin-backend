@@ -12,33 +12,51 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// ========== CORS CONFIGURATION ==========
+const corsOptions = {
+  origin: [
+    'https://quantumcoin.com.ng',
+    'http://localhost:3000',
+    'http://localhost:5500',
+    'http://127.0.0.1:5500',
+    'http://localhost:8080',
+    'https://quantum-coin-slv1.vercel.app',
+    'https://quantum-coin-backend.onrender.com',
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
+};
 
-// API Health Check
-app.get('/api', (req, res) => {
-  res.json({
-    status: "OK",
-    message: "QuantumCoin API is running 🚀",
-    timestamp: new Date().toISOString(),
-    endpoints: {
-      auth: "/api/auth",
-      market: "/api/market",
-      trade: "/api/trade",
-      transactions: "/api/transactions",
-      portfolio: "/api/portfolio",
-      admin: "/api/admin"
-    }
-  });
+// CORS middleware
+app.use(cors(corsOptions));
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
+// Additional CORS headers
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (corsOptions.origin.includes(origin) || corsOptions.origin.includes('*')) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  next();
 });
 
-// Database setup
-const db = new sqlite3.Database(':memory:'); // Use in-memory for simplicity
+// Body parser middleware
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+
+// ========== DATABASE SETUP ==========
+const db = new sqlite3.Database(':memory:');
 
 // Initialize database
 function initDatabase() {
@@ -140,127 +158,126 @@ function initDatabase() {
 
     // Insert initial chat messages
     const initialMessages = [
-
-[1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
-[1,'BlockMaster','Charts load instantly, very smooth experience'],
-[1,'CryptoWolf','Withdrew $1,200 today, no stress at all'],
-[1,'ChainGuru','Made $780 trading BTC volatility'],
-[1,'BullRunBen','Caught the pump early, $450 profit'],
-[1,'BearTrap','Lost $150 but risk management saved me'],
-[1,'TokenQueen','UI feels premium, very easy to use'],
-[1,'SatoshiLite','First trade ever, made $90 profit'],
-[1,'PumpRider','DOGE run gave me $600 gains'],
-[1,'ChartSniper','Indicators are very accurate'],
-[1,'EtherLord','ETH breakout earned me $1,050'],
-[1,'QuickFlip','Scalped $210 in under 10 minutes'],
-[1,'MarginMike','Leverage tools are well designed'],
-[1,'HodlKing','Holding long-term, platform feels safe'],
-[1,'GreenCandle','Account went green today, $340 up'],
-[1,'RedCandle','Small loss today, but learned a lot'],
-[1,'TradeSensei','Best order execution I’ve seen'],
-[1,'CryptoNova','Withdrew $900 successfully'],
-[1,'WhaleWatcher','Market depth feature is amazing'],
-[1,'FastHands','Instant buy/sell, no lag'],
-[1,'Trader21','Closed $280 profit on BTC'],
-[1,'Trader22','Smooth withdrawal process'],
-[1,'Trader23','Charts feel professional'],
-[1,'Trader24','Quick execution, very impressed'],
-[1,'Trader25','Made $510 trading ETH'],
-[1,'Trader26','Low fees compared to others'],
-[1,'Trader27','UI is clean and simple'],
-[1,'Trader28','Risk tools saved my account'],
-[1,'Trader29','Took $430 profit today'],
-[1,'Trader30','Everything works perfectly'],
-[1,'Trader31','Good experience so far'],
-[1,'Trader32','Withdraw completed fast'],
-[1,'Trader33','Platform feels legit'],
-[1,'Trader34','Nice profit run today'],
-[1,'Trader35','Charts update instantly'],
-[1,'Trader36','Very beginner friendly'],
-[1,'Trader37','Execution speed is great'],
-[1,'Trader38','Market data looks accurate'],
-[1,'Trader39','Account balance increasing'],
-[1,'Trader40','Happy with performance'],
-[1,'Trader41','Made $190 profit'],
-[1,'Trader42','Lost a bit but recovered'],
-[1,'Trader43','Solid trading tools'],
-[1,'Trader44','BTC trades are smooth'],
-[1,'Trader45','Fast order fills'],
-[1,'Trader46','No lag noticed'],
-[1,'Trader47','Easy withdrawals'],
-[1,'Trader48','Nice clean dashboard'],
-[1,'Trader49','Trading feels safe'],
-[1,'Trader50','Good overall experience'],
-[1,'Trader51','Closed green today'],
-[1,'Trader52','ETH scalps working well'],
-[1,'Trader53','Very responsive charts'],
-[1,'Trader54','No crashes so far'],
-[1,'Trader55','Simple and effective'],
-[1,'Trader56','Withdrew without issues'],
-[1,'Trader57','Good risk management'],
-[1,'Trader58','Made steady profits'],
-[1,'Trader59','Smooth navigation'],
-[1,'Trader60','Satisfied user'],
-[1,'Trader61','BTC breakout paid off'],
-[1,'Trader62','Quick deposit approval'],
-[1,'Trader63','Platform is stable'],
-[1,'Trader64','Clear price action'],
-[1,'Trader65','Small wins add up'],
-[1,'Trader66','Good stop loss tools'],
-[1,'Trader67','No hidden fees'],
-[1,'Trader68','Easy to understand'],
-[1,'Trader69','Made $360 today'],
-[1,'Trader70','Everything looks good'],
-[1,'Trader71','Charts are sharp'],
-[1,'Trader72','Nice execution speed'],
-[1,'Trader73','Account growing slowly'],
-[1,'Trader74','Works as expected'],
-[1,'Trader75','Very smooth trades'],
-[1,'Trader76','Market depth is helpful'],
-[1,'Trader77','Profits came in'],
-[1,'Trader78','Withdraw successful'],
-[1,'Trader79','UI feels modern'],
-[1,'Trader80','Reliable platform'],
-[1,'Trader81','BTC scalp worked'],
-[1,'Trader82','ETH trade went green'],
-[1,'Trader83','Fast confirmations'],
-[1,'Trader84','No complaints so far'],
-[1,'Trader85','Easy to trade'],
-[1,'Trader86','Good indicators'],
-[1,'Trader87','Quick response time'],
-[1,'Trader88','Funds safe here'],
-[1,'Trader89','Nice profit margin'],
-[1,'Trader90','Stable experience'],
-[1,'Trader91','DOGE pump paid'],
-[1,'Trader92','Clean charts'],
-[1,'Trader93','Simple layout'],
-[1,'Trader94','Good trading engine'],
-[1,'Trader95','No slippage noticed'],
-[1,'Trader96','Withdrew profits today'],
-[1,'Trader97','Very smooth'],
-[1,'Trader98','Nice balance growth'],
-[1,'Trader99','Trades executed fast'],
-[1,'Trader100','Happy trader'],
-[1,'Trader101','All good here'],
-[1,'Trader102','Trading daily'],
-[1,'Trader103','No issues'],
-[1,'Trader104','Good platform'],
-[1,'Trader105','Solid performance'],
-[1,'Trader106','Charts load fast'],
-[1,'Trader107','Easy withdrawals'],
-[1,'Trader108','Consistent profits'],
-[1,'Trader109','User friendly'],
-[1,'Trader110','Reliable'],
-[1,'Trader291','Everything works fine'],
-[1,'Trader292','Smooth trades'],
-[1,'Trader293','No errors seen'],
-[1,'Trader294','Fast execution'],
-[1,'Trader295','Withdraw OK'],
-[1,'Trader296','Charts are clean'],
-[1,'Trader297','Good experience'],
-[1,'Trader298','Stable platform'],
-[1,'Trader299','Trading feels safe'],
-[1,'Trader300','Satisfied overall']
+      [1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
+      [1,'BlockMaster','Charts load instantly, very smooth experience'],
+      [1,'CryptoWolf','Withdrew $1,200 today, no stress at all'],
+      [1,'ChainGuru','Made $780 trading BTC volatility'],
+      [1,'BullRunBen','Caught the pump early, $450 profit'],
+      [1,'BearTrap','Lost $150 but risk management saved me'],
+      [1,'TokenQueen','UI feels premium, very easy to use'],
+      [1,'SatoshiLite','First trade ever, made $90 profit'],
+      [1,'PumpRider','DOGE run gave me $600 gains'],
+      [1,'ChartSniper','Indicators are very accurate'],
+      [1,'EtherLord','ETH breakout earned me $1,050'],
+      [1,'QuickFlip','Scalped $210 in under 10 minutes'],
+      [1,'MarginMike','Leverage tools are well designed'],
+      [1,'HodlKing','Holding long-term, platform feels safe'],
+      [1,'GreenCandle','Account went green today, $340 up'],
+      [1,'RedCandle','Small loss today, but learned a lot'],
+      [1,'TradeSensei','Best order execution I\'ve seen'],
+      [1,'CryptoNova','Withdrew $900 successfully'],
+      [1,'WhaleWatcher','Market depth feature is amazing'],
+      [1,'FastHands','Instant buy/sell, no lag'],
+      [1,'Trader21','Closed $280 profit on BTC'],
+      [1,'Trader22','Smooth withdrawal process'],
+      [1,'Trader23','Charts feel professional'],
+      [1,'Trader24','Quick execution, very impressed'],
+      [1,'Trader25','Made $510 trading ETH'],
+      [1,'Trader26','Low fees compared to others'],
+      [1,'Trader27','UI is clean and simple'],
+      [1,'Trader28','Risk tools saved my account'],
+      [1,'Trader29','Took $430 profit today'],
+      [1,'Trader30','Everything works perfectly'],
+      [1,'Trader31','Good experience so far'],
+      [1,'Trader32','Withdraw completed fast'],
+      [1,'Trader33','Platform feels legit'],
+      [1,'Trader34','Nice profit run today'],
+      [1,'Trader35','Charts update instantly'],
+      [1,'Trader36','Very beginner friendly'],
+      [1,'Trader37','Execution speed is great'],
+      [1,'Trader38','Market data looks accurate'],
+      [1,'Trader39','Account balance increasing'],
+      [1,'Trader40','Happy with performance'],
+      [1,'Trader41','Made $190 profit'],
+      [1,'Trader42','Lost a bit but recovered'],
+      [1,'Trader43','Solid trading tools'],
+      [1,'Trader44','BTC trades are smooth'],
+      [1,'Trader45','Fast order fills'],
+      [1,'Trader46','No lag noticed'],
+      [1,'Trader47','Easy withdrawals'],
+      [1,'Trader48','Nice clean dashboard'],
+      [1,'Trader49','Trading feels safe'],
+      [1,'Trader50','Good overall experience'],
+      [1,'Trader51','Closed green today'],
+      [1,'Trader52','ETH scalps working well'],
+      [1,'Trader53','Very responsive charts'],
+      [1,'Trader54','No crashes so far'],
+      [1,'Trader55','Simple and effective'],
+      [1,'Trader56','Withdrew without issues'],
+      [1,'Trader57','Good risk management'],
+      [1,'Trader58','Made steady profits'],
+      [1,'Trader59','Smooth navigation'],
+      [1,'Trader60','Satisfied user'],
+      [1,'Trader61','BTC breakout paid off'],
+      [1,'Trader62','Quick deposit approval'],
+      [1,'Trader63','Platform is stable'],
+      [1,'Trader64','Clear price action'],
+      [1,'Trader65','Small wins add up'],
+      [1,'Trader66','Good stop loss tools'],
+      [1,'Trader67','No hidden fees'],
+      [1,'Trader68','Easy to understand'],
+      [1,'Trader69','Made $360 today'],
+      [1,'Trader70','Everything looks good'],
+      [1,'Trader71','Charts are sharp'],
+      [1,'Trader72','Nice execution speed'],
+      [1,'Trader73','Account growing slowly'],
+      [1,'Trader74','Works as expected'],
+      [1,'Trader75','Very smooth trades'],
+      [1,'Trader76','Market depth is helpful'],
+      [1,'Trader77','Profits came in'],
+      [1,'Trader78','Withdraw successful'],
+      [1,'Trader79','UI feels modern'],
+      [1,'Trader80','Reliable platform'],
+      [1,'Trader81','BTC scalp worked'],
+      [1,'Trader82','ETH trade went green'],
+      [1,'Trader83','Fast confirmations'],
+      [1,'Trader84','No complaints so far'],
+      [1,'Trader85','Easy to trade'],
+      [1,'Trader86','Good indicators'],
+      [1,'Trader87','Quick response time'],
+      [1,'Trader88','Funds safe here'],
+      [1,'Trader89','Nice profit margin'],
+      [1,'Trader90','Stable experience'],
+      [1,'Trader91','DOGE pump paid'],
+      [1,'Trader92','Clean charts'],
+      [1,'Trader93','Simple layout'],
+      [1,'Trader94','Good trading engine'],
+      [1,'Trader95','No slippage noticed'],
+      [1,'Trader96','Withdrew profits today'],
+      [1,'Trader97','Very smooth'],
+      [1,'Trader98','Nice balance growth'],
+      [1,'Trader99','Trades executed fast'],
+      [1,'Trader100','Happy trader'],
+      [1,'Trader101','All good here'],
+      [1,'Trader102','Trading daily'],
+      [1,'Trader103','No issues'],
+      [1,'Trader104','Good platform'],
+      [1,'Trader105','Solid performance'],
+      [1,'Trader106','Charts load fast'],
+      [1,'Trader107','Easy withdrawals'],
+      [1,'Trader108','Consistent profits'],
+      [1,'Trader109','User friendly'],
+      [1,'Trader110','Reliable'],
+      [1,'Trader291','Everything works fine'],
+      [1,'Trader292','Smooth trades'],
+      [1,'Trader293','No errors seen'],
+      [1,'Trader294','Fast execution'],
+      [1,'Trader295','Withdraw OK'],
+      [1,'Trader296','Charts are clean'],
+      [1,'Trader297','Good experience'],
+      [1,'Trader298','Stable platform'],
+      [1,'Trader299','Trading feels safe'],
+      [1,'Trader300','Satisfied overall']
     ];
 
     db.run(`DELETE FROM chat_messages`);
@@ -307,13 +324,15 @@ const sessions = new Map();
 
 // Authentication middleware
 function authenticateToken(req, res, next) {
-  const token = req.headers['authorization'];
+  const authHeader = req.headers['authorization'];
   
-  if (!token) {
+  if (!authHeader) {
     return res.status(401).json({ error: 'Access denied. No token provided.' });
   }
   
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   const session = sessions.get(token);
+  
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
   }
@@ -323,13 +342,15 @@ function authenticateToken(req, res, next) {
 }
 
 function authenticateAdmin(req, res, next) {
-  const token = req.headers['authorization'];
+  const authHeader = req.headers['authorization'];
   
-  if (!token) {
+  if (!authHeader) {
     return res.status(401).json({ error: 'Access denied' });
   }
   
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   const session = sessions.get(token);
+  
   if (!session || !session.user.isAdmin) {
     return res.status(403).json({ error: 'Admin access required' });
   }
@@ -405,9 +426,38 @@ function generateChartData(symbol, timeframe) {
   return data;
 }
 
-// ==================== API ROUTES ====================
+// ========== API ROUTES ==========
 
-// AUTH ROUTES
+// Health Check Endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    service: 'QuantumCoin API',
+    version: '1.0.0',
+    uptime: process.uptime()
+  });
+});
+
+// API Root
+app.get('/api', (req, res) => {
+  res.json({
+    status: "OK",
+    message: "QuantumCoin API is running 🚀",
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: "/api/auth",
+      market: "/api/market",
+      trade: "/api/trade",
+      transactions: "/api/transactions",
+      portfolio: "/api/portfolio",
+      admin: "/api/admin",
+      health: "/api/health"
+    }
+  });
+});
+
+// ========== AUTH ROUTES ==========
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -416,7 +466,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    const user = await dbQuery.get('SELECT * FROM users WHERE username = ?', [username]);
+    const user = await dbQuery.get('SELECT * FROM users WHERE username = ? OR email = ?', [username, username]);
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -429,7 +479,7 @@ app.post('/api/auth/login', async (req, res) => {
     
     await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
     
-    // Create simple session token
+    // Create session token
     const token = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sessions.set(token, { 
       user: {
@@ -469,6 +519,12 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
     
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    
     const hashedPassword = bcrypt.hashSync(password, 10);
     
     const result = await dbQuery.run(
@@ -476,7 +532,7 @@ app.post('/api/auth/register', async (req, res) => {
       [username, email, hashedPassword, 0.00, 100000.00]
     );
     
-    // Create simple session token
+    // Create session token
     const token = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sessions.set(token, { 
       user: {
@@ -499,14 +555,15 @@ app.post('/api/auth/register', async (req, res) => {
       }
     });
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT') {
+    if (error.message && error.message.includes('UNIQUE constraint failed')) {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
+    console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed' });
   }
 });
 
-// Google Auth Route
+// Google OAuth Route
 app.post('/api/auth/google', async (req, res) => {
   try {
     const { credential } = req.body;
@@ -542,7 +599,7 @@ app.post('/api/auth/google', async (req, res) => {
     // Update last login
     await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
     
-    // Create simple session token
+    // Create session token
     const token = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sessions.set(token, { 
       user: {
@@ -573,8 +630,9 @@ app.post('/api/auth/google', async (req, res) => {
 
 // Logout endpoint
 app.post('/api/auth/logout', (req, res) => {
-  const token = req.headers['authorization'];
-  if (token) {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) {
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
     sessions.delete(token);
   }
   res.json({ success: true, message: 'Logged out successfully' });
@@ -598,6 +656,7 @@ app.get('/api/auth/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// Admin login
 app.post('/api/auth/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -613,7 +672,7 @@ app.post('/api/auth/admin/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Create simple session token
+    // Create session token
     const token = `admin_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sessions.set(token, { 
       user: {
@@ -631,7 +690,7 @@ app.post('/api/auth/admin/login', async (req, res) => {
   }
 });
 
-// MARKET DATA ROUTES
+// ========== MARKET DATA ROUTES ==========
 app.get('/api/market/data', (req, res) => {
   res.json(cryptoData);
 });
@@ -646,7 +705,7 @@ app.get('/api/market/chart/:symbol/:timeframe', (req, res) => {
   }
 });
 
-// PORTFOLIO ROUTES
+// ========== PORTFOLIO ROUTES ==========
 app.get('/api/portfolio', authenticateToken, async (req, res) => {
   try {
     const portfolio = await dbQuery.all(
@@ -675,7 +734,7 @@ app.get('/api/portfolio', authenticateToken, async (req, res) => {
   }
 });
 
-// TRANSACTION ROUTES
+// ========== TRANSACTION ROUTES ==========
 app.get('/api/transactions', authenticateToken, async (req, res) => {
   try {
     const transactions = await dbQuery.all(
@@ -694,7 +753,7 @@ app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
   try {
     const { amount } = req.body;
     
-    if (amount < 10) {
+    if (!amount || amount < 10) {
       return res.status(400).json({ error: 'Minimum deposit is $10' });
     }
     
@@ -728,12 +787,16 @@ app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
   try {
     const { amount, network, wallet_address } = req.body;
     
-    if (amount < 10) {
+    if (!amount || amount < 10) {
       return res.status(400).json({ error: 'Minimum withdrawal is $10' });
     }
     
     if (amount > 50000) {
       return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
+    }
+    
+    if (!network || !wallet_address) {
+      return res.status(400).json({ error: 'Network and wallet address are required' });
     }
     
     const user = await dbQuery.get(
@@ -783,7 +846,7 @@ app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
   }
 });
 
-// TRADE ROUTES (Fixed version without SQL syntax errors)
+// ========== TRADE ROUTES ==========
 app.post('/api/trade', authenticateToken, async (req, res) => {
   try {
     const { type, symbol, amount, account_type, prediction } = req.body;
@@ -793,18 +856,24 @@ app.post('/api/trade', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid symbol' });
     }
     
-    if (amount <= 0) {
+    if (!amount || amount <= 0) {
       return res.status(400).json({ error: 'Invalid amount' });
+    }
+    
+    if (!['buy', 'sell'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid trade type' });
+    }
+    
+    if (!['funding', 'demo'].includes(account_type)) {
+      return res.status(400).json({ error: 'Invalid account type' });
     }
     
     const fee = amount * 0.001;
     
     if (type === 'buy') {
       return await buyTrade(req, res, symbol, amount, price, account_type, fee, prediction);
-    } else if (type === 'sell') {
-      return await sellTrade(req, res, symbol, amount, price, account_type);
     } else {
-      return res.status(400).json({ error: 'Invalid trade type' });
+      return await sellTrade(req, res, symbol, amount, price, account_type);
     }
   } catch (error) {
     console.error('Trade error:', error);
@@ -1014,7 +1083,7 @@ app.get('/api/trade/history', authenticateToken, async (req, res) => {
   }
 });
 
-// ADMIN ROUTES
+// ========== ADMIN ROUTES ==========
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
     const users = await dbQuery.all(
@@ -1163,7 +1232,7 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
   }
 });
 
-// CHAT ROUTES
+// ========== CHAT ROUTES ==========
 app.get('/api/chat/history', async (req, res) => {
   try {
     const messages = await dbQuery.all(
@@ -1175,7 +1244,7 @@ app.get('/api/chat/history', async (req, res) => {
   }
 });
 
-// WebSocket connections
+// ========== WEB SOCKET ==========
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
   
@@ -1225,7 +1294,7 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Simulate chat messages from other users (every 60 seconds)
+  // Simulate chat messages from other users
   setInterval(() => {
     const messages = [
       "BTC looking bullish today!",
@@ -1249,7 +1318,7 @@ io.on('connection', (socket) => {
       message: randomMessage,
       timestamp: new Date().toISOString()
     });
-  }, 60000); // Every 60 seconds
+  }, 60000);
   
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
@@ -1268,18 +1337,19 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
+// ========== ERROR HANDLING ==========
 // 404 handler for API routes
 app.use('/api/*', (req, res) => {
   res.status(404).json({ 
     error: 'API endpoint not found',
     available_endpoints: {
-      health: 'GET /api',
+      health: 'GET /api/health',
       auth: {
         login: 'POST /api/auth/login',
         register: 'POST /api/auth/register',
         google: 'POST /api/auth/google',
         logout: 'POST /api/auth/logout',
-        profile: 'GET /api/auth/profile',
+        profile: 'GET /api/auth/profile (Auth)',
         admin_login: 'POST /api/auth/admin/login'
       },
       market: {
@@ -1311,7 +1381,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Initialize and start server
+// ========== INITIALIZE AND START SERVER ==========
 initDatabase();
 
 const PORT = process.env.PORT || 10000;
@@ -1321,11 +1391,12 @@ server.listen(PORT, () => {
   console.log(`👤 User login: testuser / password123`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
   console.log(`🌐 Frontend URL: https://quantumcoin.com.ng`);
-  console.log(`💡 Modifications made:`);
+  console.log(`✅ CORS configured for: ${corsOptions.origin.join(', ')}`);
+  console.log(`💡 Features:`);
+  console.log(`   • Fixed Google OAuth CORS issues`);
   console.log(`   • New accounts start with $0 funding balance`);
-  console.log(`   • Added prediction-based trading`);
-  console.log(`   • Live chat messages every 60 seconds`);
-  console.log(`   • Sell function properly adds to correct account`);
+  console.log(`   • Enhanced error handling`);
+  console.log(`   • Offline mode support in frontend`);
 });
 
 module.exports = { app, server };
