@@ -1,4 +1,4 @@
-// server.js - QuantumCoin API Backend (Modified without JWT) - FIXED VERSION
+// server.js - QuantumCoin API Backend (FIXED VERSION)
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -43,13 +43,13 @@ const db = new sqlite3.Database(':memory:'); // Use in-memory for simplicity
 // Initialize database
 function initDatabase() {
   db.serialize(() => {
-    // Users table - MODIFIED: funding_balance starts at 0 for new accounts
+    // Users table - funding_balance starts at 0 for new accounts
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      funding_balance REAL DEFAULT 0.00,  // CHANGED: Start at 0 for new accounts
+      funding_balance REAL DEFAULT 0.00,
       demo_balance REAL DEFAULT 100000.00,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_login DATETIME,
@@ -86,25 +86,25 @@ function initDatabase() {
       purchase_price REAL NOT NULL,
       current_value REAL,
       profit_loss REAL DEFAULT 0,
-      account_type TEXT DEFAULT 'funding',  // ADDED: Track which account was used
+      account_type TEXT DEFAULT 'funding',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME,
       FOREIGN KEY (user_id) REFERENCES users (id)
     )`);
 
-    // Trade history table (for storing predictions and results)
+    // Trade history table
     db.run(`CREATE TABLE IF NOT EXISTS trade_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       coin_symbol TEXT NOT NULL,
-      trade_type TEXT NOT NULL,  // 'buy' or 'sell'
+      trade_type TEXT NOT NULL,
       amount REAL NOT NULL,
       price REAL NOT NULL,
-      account_type TEXT NOT NULL,  // 'funding' or 'demo'
-      prediction TEXT,  // 'up' or 'down'
-      result TEXT,  // 'win' or 'loss'
+      account_type TEXT NOT NULL,
+      prediction TEXT,
+      result TEXT,
       profit_loss REAL,
-      status TEXT DEFAULT 'open',  // 'open', 'closed', 'expired'
+      status TEXT DEFAULT 'open',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       closed_at DATETIME,
       FOREIGN KEY (user_id) REFERENCES users (id)
@@ -133,13 +133,14 @@ function initDatabase() {
     db.run(`INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
       ['admin', adminPassword]);
 
-    // Insert default user if not exists (with 0 funding balance)
+    // Insert default user if not exists
     const userPassword = bcrypt.hashSync('password123', 10);
     db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
       ['testuser', 'test@quantumcoin.com', userPassword, 0.00, 100000.00]);
 
     // Insert initial chat messages
     const initialMessages = [
+
 [1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
 [1,'BlockMaster','Charts load instantly, very smooth experience'],
 [1,'CryptoWolf','Withdrew $1,200 today, no stress at all'],
@@ -301,10 +302,10 @@ const dbQuery = {
   }
 };
 
-// Simple session storage (replacing JWT)
+// Simple session storage
 const sessions = new Map();
 
-// Authentication middleware (simplified without JWT)
+// Authentication middleware
 function authenticateToken(req, res, next) {
   const token = req.headers['authorization'];
   
@@ -406,7 +407,7 @@ function generateChartData(symbol, timeframe) {
 
 // ==================== API ROUTES ====================
 
-// AUTH ROUTES (Modified without JWT)
+// AUTH ROUTES
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -472,7 +473,7 @@ app.post('/api/auth/register', async (req, res) => {
     
     const result = await dbQuery.run(
       'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
-      [username, email, hashedPassword, 0.00, 100000.00]  // Funding starts at 0
+      [username, email, hashedPassword, 0.00, 100000.00]
     );
     
     // Create simple session token
@@ -532,7 +533,7 @@ app.post('/api/auth/google', async (req, res) => {
       const hashedPassword = bcrypt.hashSync(Date.now().toString(), 10);
       const result = await dbQuery.run(
         'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
-        [username, email, hashedPassword, 0.00, 100000.00]  // Funding starts at 0
+        [username, email, hashedPassword, 0.00, 100000.00]
       );
       
       user = await dbQuery.get('SELECT * FROM users WHERE id = ?', [result.id]);
@@ -782,7 +783,7 @@ app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
   }
 });
 
-// TRADE ROUTES (Modified for prediction-based trading)
+// TRADE ROUTES (Fixed version without SQL syntax errors)
 app.post('/api/trade', authenticateToken, async (req, res) => {
   try {
     const { type, symbol, amount, account_type, prediction } = req.body;
@@ -796,11 +797,10 @@ app.post('/api/trade', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid amount' });
     }
     
-    const balanceColumn = account_type === 'demo' ? 'demo_balance' : 'funding_balance';
     const fee = amount * 0.001;
     
     if (type === 'buy') {
-      return await buyTrade(req, res, symbol, amount, price, balanceColumn, fee, account_type, prediction);
+      return await buyTrade(req, res, symbol, amount, price, account_type, fee, prediction);
     } else if (type === 'sell') {
       return await sellTrade(req, res, symbol, amount, price, account_type);
     } else {
@@ -812,13 +812,26 @@ app.post('/api/trade', authenticateToken, async (req, res) => {
   }
 });
 
-async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee, account_type, prediction) {
+async function buyTrade(req, res, symbol, amount, price, account_type, fee, prediction) {
   const totalCost = amount;
   
-  const user = await dbQuery.get(
-    `SELECT ${balanceColumn} as balance FROM users WHERE id = ?`,
-    [req.user.id]
-  );
+  // Get user with appropriate balance
+  let user;
+  if (account_type === 'demo') {
+    user = await dbQuery.get(
+      'SELECT demo_balance as balance FROM users WHERE id = ?',
+      [req.user.id]
+    );
+  } else {
+    user = await dbQuery.get(
+      'SELECT funding_balance as balance FROM users WHERE id = ?',
+      [req.user.id]
+    );
+  }
+  
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
   
   if (user.balance < totalCost) {
     return res.status(400).json({ error: 'Insufficient balance' });
@@ -826,20 +839,20 @@ async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee, acc
   
   const coinAmount = (totalCost - fee) / price;
   
-  // FIXED: Use proper SQL syntax for updating balance
-  if (balanceColumn === 'demo_balance') {
+  // Update appropriate balance
+  if (account_type === 'demo') {
     await dbQuery.run(
-      `UPDATE users SET demo_balance = demo_balance - ? WHERE id = ?`,
+      'UPDATE users SET demo_balance = demo_balance - ? WHERE id = ?',
       [totalCost, req.user.id]
     );
   } else {
     await dbQuery.run(
-      `UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?`,
+      'UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?',
       [totalCost, req.user.id]
     );
   }
   
-  // Create trade history entry for prediction
+  // Create trade history entry
   await dbQuery.run(
     `INSERT INTO trade_history 
      (user_id, coin_symbol, trade_type, amount, price, account_type, prediction, status) 
@@ -847,6 +860,7 @@ async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee, acc
     [req.user.id, symbol, 'buy', coinAmount, price, account_type, prediction || 'up', 'open']
   );
   
+  // Check for existing portfolio entry
   const existing = await dbQuery.get(
     'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
     [req.user.id, symbol, account_type]
@@ -874,6 +888,7 @@ async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee, acc
     );
   }
   
+  // Record transaction
   await dbQuery.run(
     `INSERT INTO transactions 
      (user_id, type, amount, fees, status, created_at) 
@@ -881,6 +896,7 @@ async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee, acc
     [req.user.id, 'buy', totalCost, fee, 'completed']
   );
   
+  // Get updated user data
   const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
   
   res.json({
@@ -895,6 +911,7 @@ async function buyTrade(req, res, symbol, amount, price, balanceColumn, fee, acc
 }
 
 async function sellTrade(req, res, symbol, amount, price, account_type) {
+  // Get holding for this account
   const holding = await dbQuery.get(
     'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
     [req.user.id, symbol, account_type]
@@ -930,6 +947,7 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
     );
   }
   
+  // Update or delete portfolio
   if (holding.amount === amount) {
     await dbQuery.run('DELETE FROM portfolio WHERE id = ?', [holding.id]);
   } else {
@@ -953,6 +971,7 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
     );
   }
   
+  // Record transaction
   await dbQuery.run(
     `INSERT INTO transactions 
      (user_id, type, amount, fees, status, created_at) 
@@ -960,6 +979,7 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
     [req.user.id, 'sell', receiveAmount, fee, 'completed']
   );
   
+  // Get updated user data
   const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
   
   res.json({
@@ -972,7 +992,7 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
   });
 }
 
-// TRADE HISTORY ROUTE (Added for dashboard)
+// TRADE HISTORY ROUTE
 app.get('/api/trade/history', authenticateToken, async (req, res) => {
   try {
     const history = await dbQuery.all(
@@ -1083,7 +1103,7 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
     
     if (transaction.type === 'deposit') {
       await dbQuery.run(
-        `UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?`,
+        'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
         [transaction.amount + (transaction.bonus || 0), transaction.user_id]
       );
     }
@@ -1294,7 +1314,7 @@ app.use((err, req, res, next) => {
 // Initialize and start server
 initDatabase();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log(`🚀 QuantumCoin API running on port ${PORT}`);
   console.log(`📊 Admin login: admin / admin123`);
@@ -1302,7 +1322,6 @@ server.listen(PORT, () => {
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
   console.log(`🌐 Frontend URL: https://quantumcoin.com.ng`);
   console.log(`💡 Modifications made:`);
-  console.log(`   • Removed JWT authentication`);
   console.log(`   • New accounts start with $0 funding balance`);
   console.log(`   • Added prediction-based trading`);
   console.log(`   • Live chat messages every 60 seconds`);
