@@ -1,4 +1,4 @@
-// server.js - QuantumCoin API Backend (COMPLETE VERSION)
+// server.js - QuantumCoin API Backend (COMPLETE FIXED VERSION)
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -27,42 +27,23 @@ const corsOptions = {
     'http://localhost:8080',
     'https://quantum-coin-slv1.vercel.app',
     'https://quantum-coin-backend.onrender.com',
-    'http://localhost:10000'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
 };
 
-// CORS middleware
 app.use(cors(corsOptions));
-
-// Handle preflight requests
 app.options('*', cors(corsOptions));
-
-// Additional CORS headers
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (corsOptions.origin.includes(origin) || corsOptions.origin.includes('*')) {
-    res.header('Access-Control-Allow-Origin', origin || '*');
-  }
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  next();
-});
-
-// Body parser middleware
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: '10mb' }));
 
 // ========== DATABASE SETUP ==========
 const db = new sqlite3.Database(':memory:');
 
-// Initialize database
 function initDatabase() {
   db.serialize(() => {
-    // Users table - funding_balance starts at 0 for new accounts
+    // Users table
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -155,11 +136,11 @@ function initDatabase() {
     // Insert default user if not exists
     const userPassword = bcrypt.hashSync('password123', 10);
     db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-      ['testuser', 'test@quantumcoin.com', userPassword, 1000.00, 100000.00]);
+      ['testuser', 'test@quantumcoin.com', userPassword, 5000.00, 100000.00]);
 
     // Insert initial chat messages
     const initialMessages = [
-      [1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
+     [1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
       [1,'BlockMaster','Charts load instantly, very smooth experience'],
       [1,'CryptoWolf','Withdrew $1,200 today, no stress at all'],
       [1,'ChainGuru','Made $780 trading BTC volatility'],
@@ -360,68 +341,159 @@ function authenticateAdmin(req, res, next) {
   next();
 }
 
-// Market Data Simulation
+// ========== MARKET DATA SIMULATION ==========
+// Realistic crypto data with proper price ranges
 let cryptoData = {
-  BTC: { name: 'Bitcoin', price: 42869.29, change: 5.32, volume: 24500000000, color: '#f7931a' },
-  ETH: { name: 'Ethereum', price: 2350.45, change: 3.21, volume: 9800000000, color: '#627eea' },
-  DOGE: { name: 'Dogecoin', price: 0.089, change: 12.45, volume: 1200000000, color: '#c2a633' },
-  SHIB: { name: 'Shiba Inu', price: 0.00000876, change: 23.67, volume: 480000000, color: '#ff00c8' },
-  ADA: { name: 'Cardano', price: 0.52, change: -1.23, volume: 320000000, color: '#0033ad' },
-  SOL: { name: 'Solana', price: 95.67, change: 7.89, volume: 2100000000, color: '#00ffa3' },
-  XRP: { name: 'Ripple', price: 0.62, change: 0.45, volume: 1800000000, color: '#23292f' },
-  BNB: { name: 'Binance Coin', price: 310.25, change: 2.34, volume: 1500000000, color: '#f0b90b' }
+  BTC: { 
+    name: 'Bitcoin', 
+    price: 42150.75, 
+    change: 2.34, 
+    volume: 24500000000, 
+    color: '#f7931a',
+    volatility: 0.02 
+  },
+  ETH: { 
+    name: 'Ethereum', 
+    price: 2315.42, 
+    change: 3.21, 
+    volume: 9800000000, 
+    color: '#627eea',
+    volatility: 0.03 
+  },
+  DOGE: { 
+    name: 'Dogecoin', 
+    price: 0.086, 
+    change: 5.45, 
+    volume: 1200000000, 
+    color: '#c2a633',
+    volatility: 0.05 
+  },
+  SHIB: { 
+    name: 'Shiba Inu', 
+    price: 0.0000089, 
+    change: 8.67, 
+    volume: 480000000, 
+    color: '#ff00c8',
+    volatility: 0.08 
+  },
+  ADA: { 
+    name: 'Cardano', 
+    price: 0.52, 
+    change: -1.23, 
+    volume: 320000000, 
+    color: '#0033ad',
+    volatility: 0.04 
+  },
+  SOL: { 
+    name: 'Solana', 
+    price: 96.75, 
+    change: 4.89, 
+    volume: 2100000000, 
+    color: '#00ffa3',
+    volatility: 0.06 
+  },
+  XRP: { 
+    name: 'Ripple', 
+    price: 0.62, 
+    change: 0.45, 
+    volume: 1800000000, 
+    color: '#23292f',
+    volatility: 0.03 
+  },
+  BNB: { 
+    name: 'Binance Coin', 
+    price: 315.25, 
+    change: 1.34, 
+    volume: 1500000000, 
+    color: '#f0b90b',
+    volatility: 0.02 
+  }
+};
+
+// Price ranges for realistic fluctuations
+const priceRanges = {
+  BTC: { min: 35000, max: 50000 },
+  ETH: { min: 2000, max: 2800 },
+  DOGE: { min: 0.07, max: 0.12 },
+  SHIB: { min: 0.000007, max: 0.000012 },
+  ADA: { min: 0.45, max: 0.65 },
+  SOL: { min: 80, max: 120 },
+  XRP: { min: 0.55, max: 0.75 },
+  BNB: { min: 290, max: 340 }
 };
 
 // Simulate market updates
 function updateMarketPrices() {
   for (const coin in cryptoData) {
-    const volatility = coin === 'DOGE' || coin === 'SHIB' ? 0.05 : 0.02;
+    const range = priceRanges[coin];
+    const volatility = cryptoData[coin].volatility || 0.02;
     const changePercent = (Math.random() * volatility * 2) - volatility;
-    cryptoData[coin].price *= (1 + changePercent);
-    cryptoData[coin].change = changePercent * 100;
-    cryptoData[coin].volume *= (1 + Math.random() * 0.1 - 0.05);
+    
+    // Update price with realistic bounds
+    let newPrice = cryptoData[coin].price * (1 + changePercent);
+    newPrice = Math.max(range.min, Math.min(range.max, newPrice));
+    
+    // Update change percentage
+    const oldPrice = cryptoData[coin].price;
+    const actualChange = ((newPrice - oldPrice) / oldPrice) * 100;
+    
+    cryptoData[coin].price = parseFloat(newPrice.toFixed(coin === 'SHIB' ? 8 : 2));
+    cryptoData[coin].change = parseFloat(actualChange.toFixed(2));
+    cryptoData[coin].volume = cryptoData[coin].volume * (1 + Math.random() * 0.1 - 0.05);
   }
+  
+  // Broadcast update to all connected clients
   io.emit('market_update', cryptoData);
+  io.emit('market_data', cryptoData);
 }
 
 // Update prices every 3 seconds
 setInterval(updateMarketPrices, 3000);
 
-// Generate chart data
-function generateChartData(symbol, timeframe) {
+// ========== CHART DATA GENERATION - FIXED ==========
+function generateChartData(symbol, timeframe = '1h') {
   const basePrice = cryptoData[symbol]?.price || 1000;
-  const volatility = Math.abs(cryptoData[symbol]?.change / 100) || 0.02;
+  const volatility = cryptoData[symbol]?.volatility || 0.02;
+  const range = priceRanges[symbol] || { min: basePrice * 0.9, max: basePrice * 1.1 };
   const data = [];
   
   let points = 50;
-  let timeUnit = 'minutes';
+  let timeUnit = 60000; // 1 minute in milliseconds
   
   switch(timeframe) {
-    case '1h': points = 60; timeUnit = 'minutes'; break;
-    case '1d': points = 24; timeUnit = 'hours'; break;
-    case '1w': points = 7; timeUnit = 'days'; break;
-    case '1m': points = 30; timeUnit = 'days'; break;
-    case '1y': points = 12; timeUnit = 'months'; break;
+    case '1h': points = 60; timeUnit = 60000; break; // 1 minute intervals
+    case '1d': points = 24; timeUnit = 3600000; break; // 1 hour intervals
+    case '1w': points = 7; timeUnit = 86400000; break; // 1 day intervals
+    case '1m': points = 30; timeUnit = 86400000; break; // 1 day intervals
+    case '1y': points = 12; timeUnit = 2592000000; break; // 1 month intervals
+    default: points = 60; timeUnit = 60000;
   }
   
   let currentPrice = basePrice;
-  let currentTime = moment().subtract(points, timeUnit);
+  let currentTime = Date.now() - (points * timeUnit);
   
   for (let i = 0; i < points; i++) {
     const change = (Math.random() - 0.5) * volatility;
-    const newPrice = currentPrice * (1 + change);
+    let newPrice = currentPrice * (1 + change);
+    newPrice = Math.max(range.min * 0.95, Math.min(range.max * 1.05, newPrice));
+    
+    const high = Math.max(currentPrice, newPrice) * (1 + Math.random() * volatility * 0.5);
+    const low = Math.min(currentPrice, newPrice) * (1 - Math.random() * volatility * 0.5);
+    const open = currentPrice;
+    const close = newPrice;
     
     data.push({
-      time: currentTime.valueOf(),
-      open: currentPrice,
-      high: Math.max(currentPrice, newPrice) * (1 + Math.random() * volatility * 0.5),
-      low: Math.min(currentPrice, newPrice) * (1 - Math.random() * volatility * 0.5),
-      close: newPrice,
+      time: currentTime,
+      timestamp: new Date(currentTime).toISOString(),
+      open: parseFloat(open.toFixed(2)),
+      high: parseFloat(high.toFixed(2)),
+      low: parseFloat(low.toFixed(2)),
+      close: parseFloat(close.toFixed(2)),
       volume: Math.random() * 1000000 + 500000
     });
     
     currentPrice = newPrice;
-    currentTime = currentTime.add(1, timeUnit);
+    currentTime += timeUnit;
   }
   
   return data;
@@ -435,8 +507,10 @@ app.get('/api/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     service: 'QuantumCoin API',
-    version: '1.0.0',
-    uptime: process.uptime()
+    version: '2.0.0',
+    uptime: process.uptime(),
+    market_data: true,
+    chart_data: true
   });
 });
 
@@ -444,7 +518,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api', (req, res) => {
   res.json({
     status: "OK",
-    message: "QuantumCoin API is running 🚀",
+    message: "QuantumCoin API v2.0 - Chart Data Fixed 🚀",
     timestamp: new Date().toISOString(),
     endpoints: {
       auth: "/api/auth",
@@ -454,6 +528,10 @@ app.get('/api', (req, res) => {
       portfolio: "/api/portfolio",
       admin: "/api/admin",
       health: "/api/health"
+    },
+    chart_endpoints: {
+      market_data: "GET /api/market/data",
+      chart_data: "GET /api/market/chart/:symbol/:timeframe (1h,1d,1w,1m,1y)"
     }
   });
 });
@@ -487,6 +565,8 @@ app.post('/api/auth/login', async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        funding_balance: user.funding_balance,
+        demo_balance: user.demo_balance,
         isAdmin: false
       },
       createdAt: Date.now()
@@ -540,6 +620,8 @@ app.post('/api/auth/register', async (req, res) => {
         id: result.id,
         username: username,
         email: email,
+        funding_balance: 0.00,
+        demo_balance: 100000.00,
         isAdmin: false
       },
       createdAt: Date.now()
@@ -587,7 +669,7 @@ app.post('/api/auth/google', async (req, res) => {
     if (existingUser) {
       user = existingUser;
     } else {
-      // Create new user with 0 funding balance
+      // Create new user
       const hashedPassword = bcrypt.hashSync(Date.now().toString(), 10);
       const result = await dbQuery.run(
         'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
@@ -607,6 +689,8 @@ app.post('/api/auth/google', async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        funding_balance: user.funding_balance,
+        demo_balance: user.demo_balance,
         isAdmin: false
       },
       createdAt: Date.now()
@@ -691,7 +775,7 @@ app.post('/api/auth/admin/login', async (req, res) => {
   }
 });
 
-// ========== MARKET DATA ROUTES ==========
+// ========== MARKET DATA ROUTES - FIXED ==========
 app.get('/api/market/data', (req, res) => {
   res.json(cryptoData);
 });
@@ -699,11 +783,58 @@ app.get('/api/market/data', (req, res) => {
 app.get('/api/market/chart/:symbol/:timeframe', (req, res) => {
   try {
     const { symbol, timeframe } = req.params;
+    
+    // Validate symbol
+    if (!cryptoData[symbol]) {
+      return res.status(404).json({ 
+        error: 'Symbol not found',
+        available_symbols: Object.keys(cryptoData)
+      });
+    }
+    
+    // Validate timeframe
+    const validTimeframes = ['1h', '1d', '1w', '1m', '1y'];
+    if (!validTimeframes.includes(timeframe)) {
+      return res.status(400).json({ 
+        error: 'Invalid timeframe',
+        valid_timeframes: validTimeframes
+      });
+    }
+    
     const data = generateChartData(symbol, timeframe);
-    res.json(data);
+    
+    res.json({
+      symbol,
+      timeframe,
+      current_price: cryptoData[symbol].price,
+      data: data,
+      count: data.length,
+      generated_at: new Date().toISOString()
+    });
   } catch (error) {
+    console.error('Chart data error:', error);
     res.status(500).json({ error: 'Failed to generate chart data' });
   }
+});
+
+// Real-time market data endpoint
+app.get('/api/market/stream', authenticateToken, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
+  // Send initial data
+  res.write(`data: ${JSON.stringify({ type: 'init', data: cryptoData })}\n\n`);
+  
+  // Send updates every 3 seconds
+  const interval = setInterval(() => {
+    res.write(`data: ${JSON.stringify({ type: 'update', data: cryptoData, timestamp: Date.now() })}\n\n`);
+  }, 3000);
+  
+  // Clean up on client disconnect
+  req.on('close', () => {
+    clearInterval(interval);
+  });
 });
 
 // ========== PORTFOLIO ROUTES ==========
@@ -718,19 +849,21 @@ app.get('/api/portfolio', authenticateToken, async (req, res) => {
       const currentPrice = cryptoData[item.coin_symbol]?.price || item.purchase_price;
       const currentValue = item.amount * currentPrice;
       const profitLoss = currentValue - (item.amount * item.purchase_price);
-      const profitLossPercent = ((profitLoss / (item.amount * item.purchase_price)) * 100);
+      const profitLossPercent = item.purchase_price > 0 ? 
+        ((profitLoss / (item.amount * item.purchase_price)) * 100) : 0;
       
       return {
         ...item,
         current_price: currentPrice,
-        current_value: currentValue,
-        profit_loss: profitLoss,
-        profit_loss_percent: profitLossPercent
+        current_value: parseFloat(currentValue.toFixed(2)),
+        profit_loss: parseFloat(profitLoss.toFixed(2)),
+        profit_loss_percent: parseFloat(profitLossPercent.toFixed(2))
       };
     });
     
     res.json(updatedPortfolio);
   } catch (error) {
+    console.error('Portfolio error:', error);
     res.status(500).json({ error: 'Failed to fetch portfolio' });
   }
 });
@@ -741,7 +874,8 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
     const transactions = await dbQuery.all(
       `SELECT * FROM transactions 
        WHERE user_id = ? 
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC 
+       LIMIT 50`,
       [req.user.id]
     );
     res.json(transactions);
@@ -969,6 +1103,14 @@ async function buyTrade(req, res, symbol, amount, price, account_type, fee, pred
   // Get updated user data
   const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
   
+  // Emit balance update via socket
+  if (req.app.get('socketio')) {
+    req.app.get('socketio').to(`user_${req.user.id}`).emit('balance_update', {
+      funding_balance: updatedUser.funding_balance,
+      demo_balance: updatedUser.demo_balance
+    });
+  }
+  
   res.json({
     success: true,
     message: `Bought ${coinAmount.toFixed(6)} ${symbol}`,
@@ -1052,6 +1194,14 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
   // Get updated user data
   const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
   
+  // Emit balance update via socket
+  if (req.app.get('socketio')) {
+    req.app.get('socketio').to(`user_${req.user.id}`).emit('balance_update', {
+      funding_balance: updatedUser.funding_balance,
+      demo_balance: updatedUser.demo_balance
+    });
+  }
+  
   res.json({
     success: true,
     message: `Sold ${amount} ${symbol} for $${receiveAmount.toFixed(2)}`,
@@ -1081,6 +1231,18 @@ app.get('/api/trade/history', authenticateToken, async (req, res) => {
     res.json(history);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch trade history' });
+  }
+});
+
+// ========== CHAT ROUTES ==========
+app.get('/api/chat/history', async (req, res) => {
+  try {
+    const messages = await dbQuery.all(
+      'SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT 50'
+    );
+    res.json(messages.reverse());
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch chat history' });
   }
 });
 
@@ -1176,6 +1338,18 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
         'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
         [transaction.amount + (transaction.bonus || 0), transaction.user_id]
       );
+      
+      // Emit balance update
+      if (app.get('socketio')) {
+        app.get('socketio').to(`user_${transaction.user_id}`).emit('balance_update', {
+          funding_balance: transaction.amount + (transaction.bonus || 0)
+        });
+        app.get('socketio').to(`user_${transaction.user_id}`).emit('transaction_approved', {
+          type: 'deposit',
+          amount: transaction.amount,
+          bonus: transaction.bonus || 0
+        });
+      }
     }
     
     await dbQuery.run(
@@ -1214,6 +1388,18 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
         'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
         [transaction.amount, transaction.user_id]
       );
+      
+      // Emit balance update
+      if (app.get('socketio')) {
+        app.get('socketio').to(`user_${transaction.user_id}`).emit('balance_update', {
+          funding_balance: transaction.amount
+        });
+        app.get('socketio').to(`user_${transaction.user_id}`).emit('transaction_rejected', {
+          type: 'withdrawal',
+          amount: transaction.amount,
+          notes: notes || 'Rejected by admin'
+        });
+      }
     }
     
     await dbQuery.run(
@@ -1233,28 +1419,29 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
   }
 });
 
-// ========== CHAT ROUTES ==========
-app.get('/api/chat/history', async (req, res) => {
-  try {
-    const messages = await dbQuery.all(
-      'SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT 50'
-    );
-    res.json(messages.reverse());
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch chat history' });
-  }
-});
-
 // ========== WEB SOCKET ==========
+app.set('socketio', io);
+
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
   
   socket.on('join_user', (userId) => {
     socket.join(`user_${userId}`);
+    console.log(`User ${userId} joined their room`);
   });
   
   socket.on('join_admin', () => {
     socket.join('admin_room');
+    console.log('Admin joined admin room');
+  });
+  
+  socket.on('get_market_data', () => {
+    socket.emit('market_data', cryptoData);
+  });
+  
+  socket.on('get_chart_data', ({ symbol, timeframe }) => {
+    const data = generateChartData(symbol, timeframe);
+    socket.emit('chart_data', { symbol, timeframe, data });
   });
   
   socket.on('chat_message', async (data) => {
@@ -1295,7 +1482,7 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Simulate chat messages from other users
+  // Simulate random chat messages
   setInterval(() => {
     const messages = [
       "BTC looking bullish today!",
@@ -1319,24 +1506,12 @@ io.on('connection', (socket) => {
       message: randomMessage,
       timestamp: new Date().toISOString()
     });
-  }, 60000);
+  }, 30000); // Every 30 seconds
   
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
 });
-
-// Clean up old sessions every hour
-setInterval(() => {
-  const now = Date.now();
-  const oneDay = 24 * 60 * 60 * 1000;
-  
-  for (const [token, session] of sessions.entries()) {
-    if (now - session.createdAt > oneDay) {
-      sessions.delete(token);
-    }
-  }
-}, 60 * 60 * 1000);
 
 // ========== ERROR HANDLING ==========
 // 404 handler for API routes
@@ -1355,7 +1530,8 @@ app.use('/api/*', (req, res) => {
       },
       market: {
         data: 'GET /api/market/data',
-        chart: 'GET /api/market/chart/:symbol/:timeframe'
+        chart: 'GET /api/market/chart/:symbol/:timeframe (1h,1d,1w,1m,1y)',
+        stream: 'GET /api/market/stream (Auth)'
       },
       portfolio: 'GET /api/portfolio (Auth)',
       trade: {
@@ -1378,26 +1554,42 @@ app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ 
     error: 'Internal server error',
-    message: err.message
+    message: err.message,
+    timestamp: new Date().toISOString()
   });
 });
 
 // ========== INITIALIZE AND START SERVER ==========
 initDatabase();
 
+// Clean up old sessions every hour
+setInterval(() => {
+  const now = Date.now();
+  const oneDay = 24 * 60 * 60 * 1000;
+  
+  for (const [token, session] of sessions.entries()) {
+    if (now - session.createdAt > oneDay) {
+      sessions.delete(token);
+    }
+  }
+}, 60 * 60 * 1000);
+
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`🚀 QuantumCoin API running on port ${PORT}`);
+  console.log(`🚀 QuantumCoin API v2.0 running on port ${PORT}`);
+  console.log(`📊 Market Data: Live prices for ${Object.keys(cryptoData).length} coins`);
+  console.log(`📈 Chart Data: Fixed and working for all timeframes`);
+  console.log(`🔗 API available at: http://localhost:${PORT}/api`);
+  console.log(`📡 WebSocket: Real-time updates enabled`);
   console.log(`📊 Admin login: admin / admin123`);
   console.log(`👤 User login: testuser / password123`);
-  console.log(`🔗 API available at: http://localhost:${PORT}/api`);
-  console.log(`🌐 Frontend URL: https://quantumcoin.com.ng`);
-  console.log(`✅ CORS configured for: ${corsOptions.origin.join(', ')}`);
+  console.log(`💰 Test user funding balance: $5,000.00`);
   console.log(`💡 Features:`);
-  console.log(`   • Fixed Google OAuth CORS issues`);
-  console.log(`   • New accounts start with $1000 funding balance`);
-  console.log(`   • Enhanced error handling`);
-  console.log(`   • Offline mode support in frontend`);
+  console.log(`   • Fixed chart data generation`);
+  console.log(`   • Realistic price ranges`);
+  console.log(`   • Live market updates`);
+  console.log(`   • WebSocket support`);
+  console.log(`   • Candlestick & line chart support`);
 });
 
 module.exports = { app, server };
