@@ -140,7 +140,6 @@ function initDatabase() {
 
     // Insert initial chat messages
     const initialMessages = [
-
 [1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
 [1,'BlockMaster','Charts load instantly, very smooth experience'],
 [1,'CryptoWolf','Withdrew $1,200 today, no stress at all'],
