@@ -155,7 +155,7 @@ function initDatabase() {
     // Insert default user if not exists
     const userPassword = bcrypt.hashSync('password123', 10);
     db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-      ['testuser', 'test@quantumcoin.com', userPassword, 1000.00, 100000.00]);
+      ['testuser', 'test@quantumcoin.com', userPassword, 0.00, 100000.00]);
 
     // Insert initial chat messages
     const initialMessages = [
@@ -530,7 +530,7 @@ app.post('/api/auth/register', async (req, res) => {
     
     const result = await dbQuery.run(
       'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
-      [username, email, hashedPassword, 1000.00, 100000.00]
+      [username, email, hashedPassword, 0.00, 100000.00]
     );
     
     // Create session token
@@ -551,7 +551,7 @@ app.post('/api/auth/register', async (req, res) => {
         id: result.id,
         username,
         email,
-        funding_balance: 1000.00,
+        funding_balance: 0.00,
         demo_balance: 100000.00
       }
     });
@@ -591,7 +591,7 @@ app.post('/api/auth/google', async (req, res) => {
       const hashedPassword = bcrypt.hashSync(Date.now().toString(), 10);
       const result = await dbQuery.run(
         'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
-        [username, email, hashedPassword, 1000.00, 100000.00]
+        [username, email, hashedPassword, 0.00, 100000.00]
       );
       
       user = await dbQuery.get('SELECT * FROM users WHERE id = ?', [result.id]);
