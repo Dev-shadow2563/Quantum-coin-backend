@@ -155,7 +155,7 @@ function initDatabase() {
     // Insert default user if not exists
     const userPassword = bcrypt.hashSync('password123', 10);
     db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-      ['testuser', 'test@quantumcoin.com', userPassword, 0.00, 100000.00]);
+      ['testuser', 'test@quantumcoin.com', userPassword, 1000.00, 100000.00]);
 
     // Insert initial chat messages
     const initialMessages = [
