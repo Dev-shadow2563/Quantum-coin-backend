@@ -1,4 +1,4 @@
-// server.js - QuantumCoin API Backend (COMPLETE FIXED VERSION)
+// server.js - QuantumCoin API Backend (COMPLETE MERGED VERSION WITH NOTIFICATIONS)
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -71,9 +71,23 @@ function initDatabase() {
       bonus REAL DEFAULT 0,
       admin_approved BOOLEAN DEFAULT 0,
       admin_id INTEGER,
-      notes TEXT,
+      admin_notes TEXT,
+      user_notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       completed_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    )`);
+
+    // User notifications table
+    db.run(`CREATE TABLE IF NOT EXISTS user_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      data TEXT,
+      is_read BOOLEAN DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users (id)
     )`);
 
@@ -140,126 +154,126 @@ function initDatabase() {
 
     // Insert initial chat messages
     const initialMessages = [
-     [1,'AltcoinAce','Just closed a $320 profit on SOL. Loving the speed!'],
-      [1,'BlockMaster','Charts load instantly, very smooth experience'],
-      [1,'CryptoWolf','Withdrew $1,200 today, no stress at all'],
-      [1,'ChainGuru','Made $780 trading BTC volatility'],
-      [1,'BullRunBen','Caught the pump early, $450 profit'],
-      [1,'BearTrap','Lost $150 but risk management saved me'],
-      [1,'TokenQueen','UI feels premium, very easy to use'],
-      [1,'SatoshiLite','First trade ever, made $90 profit'],
-      [1,'PumpRider','DOGE run gave me $600 gains'],
-      [1,'ChartSniper','Indicators are very accurate'],
-      [1,'EtherLord','ETH breakout earned me $1,050'],
-      [1,'QuickFlip','Scalped $210 in under 10 minutes'],
-      [1,'MarginMike','Leverage tools are well designed'],
-      [1,'HodlKing','Holding long-term, platform feels safe'],
-      [1,'GreenCandle','Account went green today, $340 up'],
-      [1,'RedCandle','Small loss today, but learned a lot'],
-      [1,'TradeSensei','Best order execution I\'ve seen'],
-      [1,'CryptoNova','Withdrew $900 successfully'],
-      [1,'WhaleWatcher','Market depth feature is amazing'],
-      [1,'FastHands','Instant buy/sell, no lag'],
-      [1,'Trader21','Closed $280 profit on BTC'],
-      [1,'Trader22','Smooth withdrawal process'],
-      [1,'Trader23','Charts feel professional'],
-      [1,'Trader24','Quick execution, very impressed'],
-      [1,'Trader25','Made $510 trading ETH'],
-      [1,'Trader26','Low fees compared to others'],
-      [1,'Trader27','UI is clean and simple'],
-      [1,'Trader28','Risk tools saved my account'],
-      [1,'Trader29','Took $430 profit today'],
-      [1,'Trader30','Everything works perfectly'],
-      [1,'Trader31','Good experience so far'],
-      [1,'Trader32','Withdraw completed fast'],
-      [1,'Trader33','Platform feels legit'],
-      [1,'Trader34','Nice profit run today'],
-      [1,'Trader35','Charts update instantly'],
-      [1,'Trader36','Very beginner friendly'],
-      [1,'Trader37','Execution speed is great'],
-      [1,'Trader38','Market data looks accurate'],
-      [1,'Trader39','Account balance increasing'],
-      [1,'Trader40','Happy with performance'],
-      [1,'Trader41','Made $190 profit'],
-      [1,'Trader42','Lost a bit but recovered'],
-      [1,'Trader43','Solid trading tools'],
-      [1,'Trader44','BTC trades are smooth'],
-      [1,'Trader45','Fast order fills'],
-      [1,'Trader46','No lag noticed'],
-      [1,'Trader47','Easy withdrawals'],
-      [1,'Trader48','Nice clean dashboard'],
-      [1,'Trader49','Trading feels safe'],
-      [1,'Trader50','Good overall experience'],
-      [1,'Trader51','Closed green today'],
-      [1,'Trader52','ETH scalps working well'],
-      [1,'Trader53','Very responsive charts'],
-      [1,'Trader54','No crashes so far'],
-      [1,'Trader55','Simple and effective'],
-      [1,'Trader56','Withdrew without issues'],
-      [1,'Trader57','Good risk management'],
-      [1,'Trader58','Made steady profits'],
-      [1,'Trader59','Smooth navigation'],
-      [1,'Trader60','Satisfied user'],
-      [1,'Trader61','BTC breakout paid off'],
-      [1,'Trader62','Quick deposit approval'],
-      [1,'Trader63','Platform is stable'],
-      [1,'Trader64','Clear price action'],
-      [1,'Trader65','Small wins add up'],
-      [1,'Trader66','Good stop loss tools'],
-      [1,'Trader67','No hidden fees'],
-      [1,'Trader68','Easy to understand'],
-      [1,'Trader69','Made $360 today'],
-      [1,'Trader70','Everything looks good'],
-      [1,'Trader71','Charts are sharp'],
-      [1,'Trader72','Nice execution speed'],
-      [1,'Trader73','Account growing slowly'],
-      [1,'Trader74','Works as expected'],
-      [1,'Trader75','Very smooth trades'],
-      [1,'Trader76','Market depth is helpful'],
-      [1,'Trader77','Profits came in'],
-      [1,'Trader78','Withdraw successful'],
-      [1,'Trader79','UI feels modern'],
-      [1,'Trader80','Reliable platform'],
-      [1,'Trader81','BTC scalp worked'],
-      [1,'Trader82','ETH trade went green'],
-      [1,'Trader83','Fast confirmations'],
-      [1,'Trader84','No complaints so far'],
-      [1,'Trader85','Easy to trade'],
-      [1,'Trader86','Good indicators'],
-      [1,'Trader87','Quick response time'],
-      [1,'Trader88','Funds safe here'],
-      [1,'Trader89','Nice profit margin'],
-      [1,'Trader90','Stable experience'],
-      [1,'Trader91','DOGE pump paid'],
-      [1,'Trader92','Clean charts'],
-      [1,'Trader93','Simple layout'],
-      [1,'Trader94','Good trading engine'],
-      [1,'Trader95','No slippage noticed'],
-      [1,'Trader96','Withdrew profits today'],
-      [1,'Trader97','Very smooth'],
-      [1,'Trader98','Nice balance growth'],
-      [1,'Trader99','Trades executed fast'],
-      [1,'Trader100','Happy trader'],
-      [1,'Trader101','All good here'],
-      [1,'Trader102','Trading daily'],
-      [1,'Trader103','No issues'],
-      [1,'Trader104','Good platform'],
-      [1,'Trader105','Solid performance'],
-      [1,'Trader106','Charts load fast'],
-      [1,'Trader107','Easy withdrawals'],
-      [1,'Trader108','Consistent profits'],
-      [1,'Trader109','User friendly'],
-      [1,'Trader110','Reliable'],
-      [1,'Trader291','Everything works fine'],
-      [1,'Trader292','Smooth trades'],
-      [1,'Trader293','No errors seen'],
-      [1,'Trader294','Fast execution'],
-      [1,'Trader295','Withdraw OK'],
-      [1,'Trader296','Charts are clean'],
-      [1,'Trader297','Good experience'],
-      [1,'Trader298','Stable platform'],
-      [1,'Trader299','Trading feels safe'],
-      [1,'Trader300','Satisfied overall']
+      [1, 'AltcoinAce', 'Just closed a $320 profit on SOL. Loving the speed!'],
+      [1, 'BlockMaster', 'Charts load instantly, very smooth experience'],
+      [1, 'CryptoWolf', 'Withdrew $1,200 today, no stress at all'],
+      [1, 'ChainGuru', 'Made $780 trading BTC volatility'],
+      [1, 'BullRunBen', 'Caught the pump early, $450 profit'],
+      [1, 'BearTrap', 'Lost $150 but risk management saved me'],
+      [1, 'TokenQueen', 'UI feels premium, very easy to use'],
+      [1, 'SatoshiLite', 'First trade ever, made $90 profit'],
+      [1, 'PumpRider', 'DOGE run gave me $600 gains'],
+      [1, 'ChartSniper', 'Indicators are very accurate'],
+      [1, 'EtherLord', 'ETH breakout earned me $1,050'],
+      [1, 'QuickFlip', 'Scalped $210 in under 10 minutes'],
+      [1, 'MarginMike', 'Leverage tools are well designed'],
+      [1, 'HodlKing', 'Holding long-term, platform feels safe'],
+      [1, 'GreenCandle', 'Account went green today, $340 up'],
+      [1, 'RedCandle', 'Small loss today, but learned a lot'],
+      [1, 'TradeSensei', 'Best order execution I\'ve seen'],
+      [1, 'CryptoNova', 'Withdrew $900 successfully'],
+      [1, 'WhaleWatcher', 'Market depth feature is amazing'],
+      [1, 'FastHands', 'Instant buy/sell, no lag'],
+      [1, 'Trader21', 'Closed $280 profit on BTC'],
+      [1, 'Trader22', 'Smooth withdrawal process'],
+      [1, 'Trader23', 'Charts feel professional'],
+      [1, 'Trader24', 'Quick execution, very impressed'],
+      [1, 'Trader25', 'Made $510 trading ETH'],
+      [1, 'Trader26', 'Low fees compared to others'],
+      [1, 'Trader27', 'UI is clean and simple'],
+      [1, 'Trader28', 'Risk tools saved my account'],
+      [1, 'Trader29', 'Took $430 profit today'],
+      [1, 'Trader30', 'Everything works perfectly'],
+      [1, 'Trader31', 'Good experience so far'],
+      [1, 'Trader32', 'Withdraw completed fast'],
+      [1, 'Trader33', 'Platform feels legit'],
+      [1, 'Trader34', 'Nice profit run today'],
+      [1, 'Trader35', 'Charts update instantly'],
+      [1, 'Trader36', 'Very beginner friendly'],
+      [1, 'Trader37', 'Execution speed is great'],
+      [1, 'Trader38', 'Market data looks accurate'],
+      [1, 'Trader39', 'Account balance increasing'],
+      [1, 'Trader40', 'Happy with performance'],
+      [1, 'Trader41', 'Made $190 profit'],
+      [1, 'Trader42', 'Lost a bit but recovered'],
+      [1, 'Trader43', 'Solid trading tools'],
+      [1, 'Trader44', 'BTC trades are smooth'],
+      [1, 'Trader45', 'Fast order fills'],
+      [1, 'Trader46', 'No lag noticed'],
+      [1, 'Trader47', 'Easy withdrawals'],
+      [1, 'Trader48', 'Nice clean dashboard'],
+      [1, 'Trader49', 'Trading feels safe'],
+      [1, 'Trader50', 'Good overall experience'],
+      [1, 'Trader51', 'Closed green today'],
+      [1, 'Trader52', 'ETH scalps working well'],
+      [1, 'Trader53', 'Very responsive charts'],
+      [1, 'Trader54', 'No crashes so far'],
+      [1, 'Trader55', 'Simple and effective'],
+      [1, 'Trader56', 'Withdrew without issues'],
+      [1, 'Trader57', 'Good risk management'],
+      [1, 'Trader58', 'Made steady profits'],
+      [1, 'Trader59', 'Smooth navigation'],
+      [1, 'Trader60', 'Satisfied user'],
+      [1, 'Trader61', 'BTC breakout paid off'],
+      [1, 'Trader62', 'Quick deposit approval'],
+      [1, 'Trader63', 'Platform is stable'],
+      [1, 'Trader64', 'Clear price action'],
+      [1, 'Trader65', 'Small wins add up'],
+      [1, 'Trader66', 'Good stop loss tools'],
+      [1, 'Trader67', 'No hidden fees'],
+      [1, 'Trader68', 'Easy to understand'],
+      [1, 'Trader69', 'Made $360 today'],
+      [1, 'Trader70', 'Everything looks good'],
+      [1, 'Trader71', 'Charts are sharp'],
+      [1, 'Trader72', 'Nice execution speed'],
+      [1, 'Trader73', 'Account growing slowly'],
+      [1, 'Trader74', 'Works as expected'],
+      [1, 'Trader75', 'Very smooth trades'],
+      [1, 'Trader76', 'Market depth is helpful'],
+      [1, 'Trader77', 'Profits came in'],
+      [1, 'Trader78', 'Withdraw successful'],
+      [1, 'Trader79', 'UI feels modern'],
+      [1, 'Trader80', 'Reliable platform'],
+      [1, 'Trader81', 'BTC scalp worked'],
+      [1, 'Trader82', 'ETH trade went green'],
+      [1, 'Trader83', 'Fast confirmations'],
+      [1, 'Trader84', 'No complaints so far'],
+      [1, 'Trader85', 'Easy to trade'],
+      [1, 'Trader86', 'Good indicators'],
+      [1, 'Trader87', 'Quick response time'],
+      [1, 'Trader88', 'Funds safe here'],
+      [1, 'Trader89', 'Nice profit margin'],
+      [1, 'Trader90', 'Stable experience'],
+      [1, 'Trader91', 'DOGE pump paid'],
+      [1, 'Trader92', 'Clean charts'],
+      [1, 'Trader93', 'Simple layout'],
+      [1, 'Trader94', 'Good trading engine'],
+      [1, 'Trader95', 'No slippage noticed'],
+      [1, 'Trader96', 'Withdrew profits today'],
+      [1, 'Trader97', 'Very smooth'],
+      [1, 'Trader98', 'Nice balance growth'],
+      [1, 'Trader99', 'Trades executed fast'],
+      [1, 'Trader100', 'Happy trader'],
+      [1, 'Trader101', 'All good here'],
+      [1, 'Trader102', 'Trading daily'],
+      [1, 'Trader103', 'No issues'],
+      [1, 'Trader104', 'Good platform'],
+      [1, 'Trader105', 'Solid performance'],
+      [1, 'Trader106', 'Charts load fast'],
+      [1, 'Trader107', 'Easy withdrawals'],
+      [1, 'Trader108', 'Consistent profits'],
+      [1, 'Trader109', 'User friendly'],
+      [1, 'Trader110', 'Reliable'],
+      [1, 'Trader291', 'Everything works fine'],
+      [1, 'Trader292', 'Smooth trades'],
+      [1, 'Trader293', 'No errors seen'],
+      [1, 'Trader294', 'Fast execution'],
+      [1, 'Trader295', 'Withdraw OK'],
+      [1, 'Trader296', 'Charts are clean'],
+      [1, 'Trader297', 'Good experience'],
+      [1, 'Trader298', 'Stable platform'],
+      [1, 'Trader299', 'Trading feels safe'],
+      [1, 'Trader300', 'Satisfied overall']
     ];
 
     db.run(`DELETE FROM chat_messages`);
@@ -267,7 +281,7 @@ function initDatabase() {
       db.run(`INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)`, msg);
     });
     
-    console.log('✅ Database initialized');
+    console.log('✅ Database initialized with notifications support');
   });
 }
 
@@ -450,7 +464,7 @@ function updateMarketPrices() {
 // Update prices every 3 seconds
 setInterval(updateMarketPrices, 3000);
 
-// ========== CHART DATA GENERATION - FIXED ==========
+// ========== CHART DATA GENERATION ==========
 function generateChartData(symbol, timeframe = '1h') {
   const basePrice = cryptoData[symbol]?.price || 1000;
   const volatility = cryptoData[symbol]?.volatility || 0.02;
@@ -499,18 +513,40 @@ function generateChartData(symbol, timeframe = '1h') {
   return data;
 }
 
+// ========== HELPER FUNCTIONS ==========
+async function createNotification(userId, type, title, message, data = {}) {
+  try {
+    await dbQuery.run(
+      `INSERT INTO user_notifications (user_id, type, title, message, data) VALUES (?, ?, ?, ?, ?)`,
+      [userId, type, title, message, JSON.stringify(data)]
+    );
+    
+    // Send via WebSocket
+    io.to(`user_${userId}`).emit('notification', {
+      type: type,
+      title: title,
+      message: message,
+      data: data,
+      timestamp: new Date().toISOString()
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    return false;
+  }
+}
+
 // ========== API ROUTES ==========
 
-// Health Check Endpoint
+// Health Check
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'OK',
+  res.json({ 
+    status: 'OK', 
     timestamp: new Date().toISOString(),
     service: 'QuantumCoin API',
-    version: '2.0.0',
-    uptime: process.uptime(),
-    market_data: true,
-    chart_data: true
+    version: '3.0.0',
+    features: ['notifications', 'chart-data', 'real-time-market', 'admin-panel']
   });
 });
 
@@ -518,7 +554,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api', (req, res) => {
   res.json({
     status: "OK",
-    message: "QuantumCoin API v2.0 - Chart Data Fixed 🚀",
+    message: "QuantumCoin API v3.0 - Complete with Notifications 🚀",
     timestamp: new Date().toISOString(),
     endpoints: {
       auth: "/api/auth",
@@ -526,12 +562,10 @@ app.get('/api', (req, res) => {
       trade: "/api/trade",
       transactions: "/api/transactions",
       portfolio: "/api/portfolio",
+      notifications: "/api/user/notifications",
       admin: "/api/admin",
+      chat: "/api/chat",
       health: "/api/health"
-    },
-    chart_endpoints: {
-      market_data: "GET /api/market/data",
-      chart_data: "GET /api/market/chart/:symbol/:timeframe (1h,1d,1w,1m,1y)"
     }
   });
 });
@@ -611,6 +645,15 @@ app.post('/api/auth/register', async (req, res) => {
     const result = await dbQuery.run(
       'INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)',
       [username, email, hashedPassword, 0.00, 100000.00]
+    );
+    
+    // Create welcome notification
+    await createNotification(
+      result.id,
+      'success',
+      'Welcome to QuantumCoin! 🎉',
+      'Your account has been created successfully. You have $100,000 in demo balance to start trading.',
+      { type: 'welcome', demo_balance: 100000.00 }
     );
     
     // Create session token
@@ -775,7 +818,53 @@ app.post('/api/auth/admin/login', async (req, res) => {
   }
 });
 
-// ========== MARKET DATA ROUTES - FIXED ==========
+// ========== NOTIFICATION ROUTES ==========
+app.get('/api/user/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await dbQuery.all(
+      `SELECT * FROM user_notifications 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [req.user.id]
+    );
+    
+    // Mark as read
+    await dbQuery.run(
+      'UPDATE user_notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0',
+      [req.user.id]
+    );
+    
+    res.json({ notifications });
+  } catch (error) {
+    console.error('Notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+app.post('/api/admin/notify-user', authenticateAdmin, async (req, res) => {
+  try {
+    const { userId, notification } = req.body;
+    
+    if (!userId || !notification) {
+      return res.status(400).json({ error: 'User ID and notification required' });
+    }
+    
+    await createNotification(
+      userId,
+      notification.type,
+      notification.title,
+      notification.message,
+      notification.data
+    );
+    
+    res.json({ success: true, message: 'Notification sent' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
+// ========== MARKET DATA ROUTES ==========
 app.get('/api/market/data', (req, res) => {
   res.json(cryptoData);
 });
@@ -837,6 +926,148 @@ app.get('/api/market/stream', authenticateToken, (req, res) => {
   });
 });
 
+// ========== TRANSACTION ROUTES ==========
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  try {
+    const transactions = await dbQuery.all(
+      `SELECT * FROM transactions 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [req.user.id]
+    );
+    res.json(transactions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch transactions' });
+  }
+});
+
+app.get('/api/transactions/:id', authenticateToken, async (req, res) => {
+  try {
+    const transaction = await dbQuery.get(
+      `SELECT * FROM transactions WHERE id = ? AND user_id = ?`,
+      [req.params.id, req.user.id]
+    );
+    
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    
+    res.json(transaction);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch transaction' });
+  }
+});
+
+app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    
+    if (!amount || amount < 10) {
+      return res.status(400).json({ error: 'Minimum deposit is $10' });
+    }
+    
+    if (amount > 100000) {
+      return res.status(400).json({ error: 'Maximum deposit is $100,000' });
+    }
+    
+    const bonus = amount >= 1000 ? amount * 0.05 : 0;
+    
+    const result = await dbQuery.run(
+      `INSERT INTO transactions (user_id, type, amount, bonus, status, created_at) 
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [req.user.id, 'deposit', amount, bonus, 'pending']
+    );
+    
+    // Create notification for admin
+    const user = await dbQuery.get('SELECT username FROM users WHERE id = ?', [req.user.id]);
+    await createNotification(
+      1, // Admin user ID
+      'info',
+      'New Deposit Request',
+      `${user.username} requested a deposit of $${amount.toFixed(2)}`,
+      { transactionId: result.id, userId: req.user.id, username: user.username, amount: amount }
+    );
+    
+    // Create notification for user
+    await createNotification(
+      req.user.id,
+      'info',
+      'Deposit Request Submitted',
+      `Your deposit request of $${amount.toFixed(2)} has been submitted and is pending admin approval.`,
+      { transactionId: result.id, amount: amount, bonus: bonus }
+    );
+    
+    res.json({
+      success: true,
+      message: 'Deposit request submitted for admin approval',
+      transactionId: result.id,
+      amount,
+      bonus,
+      totalAmount: amount + bonus
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create deposit request' });
+  }
+});
+
+app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount, network, wallet_address } = req.body;
+    
+    if (!amount || amount < 10) return res.status(400).json({ error: 'Minimum withdrawal is $10' });
+    if (amount > 50000) return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
+    if (!network || !wallet_address) return res.status(400).json({ error: 'Network and wallet address required' });
+    
+    const user = await dbQuery.get('SELECT funding_balance FROM users WHERE id = ?', [req.user.id]);
+    if (user.funding_balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+    
+    const fees = { 'BTC': 3.00, 'ETH': 8.00, 'USDT': 1.00 }[network] || 3.00;
+    const processingFee = amount * 0.01;
+    const totalFees = processingFee + fees;
+    const receiveAmount = amount - totalFees;
+    
+    const result = await dbQuery.run(
+      `INSERT INTO transactions (user_id, type, amount, fees, status, network, wallet_address, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [req.user.id, 'withdrawal', amount, totalFees, 'pending', network, wallet_address]
+    );
+    
+    await dbQuery.run('UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?', [amount, req.user.id]);
+    
+    // Create notification for admin
+    const userData = await dbQuery.get('SELECT username FROM users WHERE id = ?', [req.user.id]);
+    await createNotification(
+      1, // Admin user ID
+      'info',
+      'New Withdrawal Request',
+      `${userData.username} requested a withdrawal of $${amount.toFixed(2)} to ${wallet_address} (${network})`,
+      { transactionId: result.id, userId: req.user.id, username: userData.username, amount: amount, network, wallet_address }
+    );
+    
+    // Create notification for user
+    await createNotification(
+      req.user.id,
+      'warning',
+      'Withdrawal Request Submitted',
+      `Your withdrawal request of $${amount.toFixed(2)} has been submitted and is pending approval. Funds will be deducted until approved.`,
+      { transactionId: result.id, amount: amount, network, wallet_address, fees: totalFees, receiveAmount: receiveAmount }
+    );
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal request submitted',
+      transactionId: result.id,
+      amount,
+      fees: totalFees,
+      receiveAmount,
+      funding_balance: user.funding_balance - amount
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create withdrawal request' });
+  }
+});
+
 // ========== PORTFOLIO ROUTES ==========
 app.get('/api/portfolio', authenticateToken, async (req, res) => {
   try {
@@ -865,119 +1096,6 @@ app.get('/api/portfolio', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Portfolio error:', error);
     res.status(500).json({ error: 'Failed to fetch portfolio' });
-  }
-});
-
-// ========== TRANSACTION ROUTES ==========
-app.get('/api/transactions', authenticateToken, async (req, res) => {
-  try {
-    const transactions = await dbQuery.all(
-      `SELECT * FROM transactions 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC 
-       LIMIT 50`,
-      [req.user.id]
-    );
-    res.json(transactions);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch transactions' });
-  }
-});
-
-app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
-  try {
-    const { amount } = req.body;
-    
-    if (!amount || amount < 10) {
-      return res.status(400).json({ error: 'Minimum deposit is $10' });
-    }
-    
-    if (amount > 100000) {
-      return res.status(400).json({ error: 'Maximum deposit is $100,000' });
-    }
-    
-    const bonus = amount >= 1000 ? amount * 0.05 : 0;
-    
-    const result = await dbQuery.run(
-      `INSERT INTO transactions 
-       (user_id, type, amount, bonus, status, created_at) 
-       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [req.user.id, 'deposit', amount, bonus, 'pending']
-    );
-    
-    res.json({
-      success: true,
-      message: 'Deposit request submitted',
-      transactionId: result.id,
-      amount,
-      bonus,
-      totalAmount: amount + bonus
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create deposit request' });
-  }
-});
-
-app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
-  try {
-    const { amount, network, wallet_address } = req.body;
-    
-    if (!amount || amount < 10) {
-      return res.status(400).json({ error: 'Minimum withdrawal is $10' });
-    }
-    
-    if (amount > 50000) {
-      return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
-    }
-    
-    if (!network || !wallet_address) {
-      return res.status(400).json({ error: 'Network and wallet address are required' });
-    }
-    
-    const user = await dbQuery.get(
-      'SELECT funding_balance FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    
-    if (user.funding_balance < amount) {
-      return res.status(400).json({ error: 'Insufficient balance' });
-    }
-    
-    const fees = {
-      'BTC': 3.00,
-      'ETH': 8.00,
-      'USDT': 1.00
-    }[network] || 3.00;
-    
-    const processingFee = amount * 0.01;
-    const totalFees = processingFee + fees;
-    const receiveAmount = amount - totalFees;
-    
-    const result = await dbQuery.run(
-      `INSERT INTO transactions 
-       (user_id, type, amount, fees, status, network, wallet_address, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [req.user.id, 'withdrawal', amount, totalFees, 'pending', network, wallet_address]
-    );
-    
-    await dbQuery.run(
-      'UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?',
-      [amount, req.user.id]
-    );
-    
-    const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
-    
-    res.json({
-      success: true,
-      message: 'Withdrawal request submitted',
-      transactionId: result.id,
-      amount,
-      fees: totalFees,
-      receiveAmount,
-      funding_balance: updatedUser.funding_balance
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create withdrawal request' });
   }
 });
 
@@ -1057,7 +1175,7 @@ async function buyTrade(req, res, symbol, amount, price, account_type, fee, pred
   }
   
   // Create trade history entry
-  await dbQuery.run(
+  const tradeResult = await dbQuery.run(
     `INSERT INTO trade_history 
      (user_id, coin_symbol, trade_type, amount, price, account_type, prediction, status) 
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1103,6 +1221,23 @@ async function buyTrade(req, res, symbol, amount, price, account_type, fee, pred
   // Get updated user data
   const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
   
+  // Create notification for successful trade
+  await createNotification(
+    req.user.id,
+    'success',
+    'Trade Executed Successfully ✅',
+    `You bought ${coinAmount.toFixed(6)} ${symbol} at $${price.toFixed(2)} for $${totalCost.toFixed(2)}`,
+    { 
+      tradeId: tradeResult.id,
+      symbol: symbol,
+      type: 'buy',
+      amount: coinAmount,
+      price: price,
+      totalCost: totalCost,
+      fee: fee
+    }
+  );
+  
   // Emit balance update via socket
   if (req.app.get('socketio')) {
     req.app.get('socketio').to(`user_${req.user.id}`).emit('balance_update', {
@@ -1143,10 +1278,11 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
     [req.user.id, symbol]
   );
   
+  let profitLoss = 0;
   if (tradeHistory) {
     const predictionCorrect = (tradeHistory.prediction === 'up' && price > tradeHistory.price) || 
                              (tradeHistory.prediction === 'down' && price < tradeHistory.price);
-    const profitLoss = (price - tradeHistory.price) * amount;
+    profitLoss = (price - tradeHistory.price) * amount;
     
     await dbQuery.run(
       `UPDATE trade_history SET 
@@ -1194,6 +1330,26 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
   // Get updated user data
   const updatedUser = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
   
+  // Create notification for successful trade
+  const resultType = profitLoss > 0 ? 'success' : 'warning';
+  const resultText = profitLoss > 0 ? 'Profit' : profitLoss < 0 ? 'Loss' : 'Break Even';
+  
+  await createNotification(
+    req.user.id,
+    resultType,
+    'Trade Closed ✅',
+    `You sold ${amount} ${symbol} at $${price.toFixed(2)} for $${receiveAmount.toFixed(2)} (${resultText}: $${Math.abs(profitLoss).toFixed(2)})`,
+    { 
+      symbol: symbol,
+      type: 'sell',
+      amount: amount,
+      price: price,
+      receiveAmount: receiveAmount,
+      profitLoss: profitLoss,
+      result: resultText.toLowerCase()
+    }
+  );
+  
   // Emit balance update via socket
   if (req.app.get('socketio')) {
     req.app.get('socketio').to(`user_${req.user.id}`).emit('balance_update', {
@@ -1207,6 +1363,7 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
     message: `Sold ${amount} ${symbol} for $${receiveAmount.toFixed(2)}`,
     receiveAmount,
     fee,
+    profitLoss,
     funding_balance: updatedUser.funding_balance,
     demo_balance: updatedUser.demo_balance
   });
@@ -1247,20 +1404,6 @@ app.get('/api/chat/history', async (req, res) => {
 });
 
 // ========== ADMIN ROUTES ==========
-app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
-  try {
-    const users = await dbQuery.all(
-      `SELECT id, username, email, funding_balance, demo_balance, 
-              created_at, last_login, is_active 
-       FROM users 
-       ORDER BY created_at DESC`
-    );
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
-
 app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
   try {
     const queries = [
@@ -1284,6 +1427,20 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
     res.json(stats);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+  }
+});
+
+app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
+  try {
+    const users = await dbQuery.all(
+      `SELECT id, username, email, funding_balance, demo_balance, 
+              created_at, last_login, is_active 
+       FROM users 
+       ORDER BY created_at DESC`
+    );
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
@@ -1322,34 +1479,42 @@ app.get('/api/admin/transactions/completed', authenticateAdmin, async (req, res)
 app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { notes } = req.body;
+    const { notes, action } = req.body;
     
-    const transaction = await dbQuery.get(
-      'SELECT * FROM transactions WHERE id = ?',
-      [id]
-    );
+    const transaction = await dbQuery.get('SELECT * FROM transactions WHERE id = ?', [id]);
     
     if (!transaction) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
     
     if (transaction.type === 'deposit') {
+      const bonus = transaction.amount >= 1000 ? transaction.amount * 0.05 : 0;
+      const totalAmount = transaction.amount + bonus;
+      
       await dbQuery.run(
         'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
-        [transaction.amount + (transaction.bonus || 0), transaction.user_id]
+        [totalAmount, transaction.user_id]
+      );
+      
+      // Send notification to user
+      await createNotification(
+        transaction.user_id,
+        'success',
+        'Deposit Approved ✅',
+        `Your deposit of $${transaction.amount.toFixed(2)} has been approved. $${totalAmount.toFixed(2)} (including $${bonus.toFixed(2)} bonus) has been added to your account.`,
+        { 
+          transactionId: id,
+          amount: transaction.amount,
+          bonus: bonus,
+          total: totalAmount
+        }
       );
       
       // Emit balance update
-      if (app.get('socketio')) {
-        app.get('socketio').to(`user_${transaction.user_id}`).emit('balance_update', {
-          funding_balance: transaction.amount + (transaction.bonus || 0)
-        });
-        app.get('socketio').to(`user_${transaction.user_id}`).emit('transaction_approved', {
-          type: 'deposit',
-          amount: transaction.amount,
-          bonus: transaction.bonus || 0
-        });
-      }
+      const updatedUser = await dbQuery.get('SELECT funding_balance FROM users WHERE id = ?', [transaction.user_id]);
+      io.to(`user_${transaction.user_id}`).emit('balance_update', {
+        funding_balance: updatedUser.funding_balance
+      });
     }
     
     await dbQuery.run(
@@ -1357,7 +1522,7 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
        status = 'completed',
        admin_approved = 1,
        admin_id = ?,
-       notes = ?,
+       admin_notes = ?,
        completed_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [req.user.id, notes || 'Approved by admin', id]
@@ -1372,12 +1537,9 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
 app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { notes } = req.body;
+    const { notes, action } = req.body;
     
-    const transaction = await dbQuery.get(
-      'SELECT * FROM transactions WHERE id = ?',
-      [id]
-    );
+    const transaction = await dbQuery.get('SELECT * FROM transactions WHERE id = ?', [id]);
     
     if (!transaction) {
       return res.status(404).json({ error: 'Transaction not found' });
@@ -1388,26 +1550,36 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
         'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
         [transaction.amount, transaction.user_id]
       );
-      
-      // Emit balance update
-      if (app.get('socketio')) {
-        app.get('socketio').to(`user_${transaction.user_id}`).emit('balance_update', {
-          funding_balance: transaction.amount
-        });
-        app.get('socketio').to(`user_${transaction.user_id}`).emit('transaction_rejected', {
-          type: 'withdrawal',
-          amount: transaction.amount,
-          notes: notes || 'Rejected by admin'
-        });
-      }
     }
+    
+    // Send notification to user
+    const notificationMessage = action === 'not_seen' 
+      ? `Your deposit of $${transaction.amount.toFixed(2)} was not received. Please check your payment and try again.`
+      : `Your transaction of $${transaction.amount.toFixed(2)} has been rejected.`;
+    
+    const notificationTitle = action === 'not_seen' 
+      ? 'Payment Not Received ⚠️'
+      : 'Transaction Rejected ❌';
+    
+    await createNotification(
+      transaction.user_id,
+      action === 'not_seen' ? 'warning' : 'danger',
+      notificationTitle,
+      notificationMessage,
+      { 
+        transactionId: id,
+        amount: transaction.amount,
+        notes: notes,
+        action: action === 'not_seen' ? 'retry_deposit' : 'contact_support'
+      }
+    );
     
     await dbQuery.run(
       `UPDATE transactions SET 
        status = 'rejected',
        admin_approved = 0,
        admin_id = ?,
-       notes = ?,
+       admin_notes = ?,
        completed_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [req.user.id, notes || 'Rejected by admin', id]
@@ -1435,6 +1607,12 @@ io.on('connection', (socket) => {
     console.log('Admin joined admin room');
   });
   
+  socket.on('subscribe', (data) => {
+    if (data.userId) {
+      socket.join(`user_${data.userId}`);
+    }
+  });
+  
   socket.on('get_market_data', () => {
     socket.emit('market_data', cryptoData);
   });
@@ -1445,27 +1623,19 @@ io.on('connection', (socket) => {
   });
   
   socket.on('chat_message', async (data) => {
-    const { userId, username, message } = data;
-    
-    if (!userId || !username || !message) {
-      return;
-    }
-    
     try {
       const result = await dbQuery.run(
         'INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)',
-        [userId, username, message]
+        [data.userId, data.username, data.message]
       );
       
-      const chatMessage = {
+      io.emit('new_chat_message', {
         id: result.id,
-        userId,
-        username,
-        message,
+        userId: data.userId,
+        username: data.username,
+        message: data.message,
         timestamp: new Date().toISOString()
-      };
-      
-      io.emit('new_chat_message', chatMessage);
+      });
     } catch (error) {
       console.error('Chat message error:', error);
     }
@@ -1514,7 +1684,6 @@ io.on('connection', (socket) => {
 });
 
 // ========== ERROR HANDLING ==========
-// 404 handler for API routes
 app.use('/api/*', (req, res) => {
   res.status(404).json({ 
     error: 'API endpoint not found',
@@ -1543,13 +1712,16 @@ app.use('/api/*', (req, res) => {
         deposit: 'POST /api/transactions/deposit (Auth)',
         withdraw: 'POST /api/transactions/withdraw (Auth)'
       },
+      notifications: {
+        list: 'GET /api/user/notifications (Auth)',
+        send: 'POST /api/admin/notify-user (Admin)'
+      },
       chat: 'GET /api/chat/history',
       admin: 'Various routes (Admin Auth)'
     }
   });
 });
 
-// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ 
@@ -1576,7 +1748,7 @@ setInterval(() => {
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`🚀 QuantumCoin API v2.0 running on port ${PORT}`);
+  console.log(`🚀 QuantumCoin API v3.0 running on port ${PORT}`);
   console.log(`📊 Market Data: Live prices for ${Object.keys(cryptoData).length} coins`);
   console.log(`📈 Chart Data: Fixed and working for all timeframes`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
@@ -1584,12 +1756,14 @@ server.listen(PORT, () => {
   console.log(`📊 Admin login: admin / admin123`);
   console.log(`👤 User login: testuser / password123`);
   console.log(`💰 Test user funding balance: $5,000.00`);
+  console.log(`🔔 Notification System: Active`);
   console.log(`💡 Features:`);
+  console.log(`   • Complete notification system`);
   console.log(`   • Fixed chart data generation`);
-  console.log(`   • Realistic price ranges`);
-  console.log(`   • Live market updates`);
+  console.log(`   • Real-time market updates`);
   console.log(`   • WebSocket support`);
-  console.log(`   • Candlestick & line chart support`);
+  console.log(`   • Admin approval system`);
+  console.log(`   • Live chat system`);
 });
 
 module.exports = { app, server };
