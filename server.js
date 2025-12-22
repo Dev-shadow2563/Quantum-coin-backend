@@ -1,4 +1,4 @@
-// server.js - QuantumCoin API Backend (COMPLETE MERGED VERSION WITH NOTIFICATIONS)
+// server.js - QuantumCoin API Backend (COMPLETE MERGED VERSION)
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -49,7 +49,7 @@ function initDatabase() {
       username TEXT UNIQUE NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      funding_balance REAL DEFAULT 0.00,
+      funding_balance REAL DEFAULT 5000.00,
       demo_balance REAL DEFAULT 100000.00,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_login DATETIME,
@@ -60,6 +60,7 @@ function initDatabase() {
     db.run(`CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
+      username TEXT NOT NULL,
       type TEXT NOT NULL,
       amount REAL NOT NULL,
       currency TEXT DEFAULT 'USD',
@@ -150,7 +151,7 @@ function initDatabase() {
     // Insert default user if not exists
     const userPassword = bcrypt.hashSync('password123', 10);
     db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-      ['testuser', 'test@quantumcoin.com', userPassword, 0.00, 100000.00]);
+      ['testuser', 'test@quantumcoin.com', userPassword, 5000.00, 100000.00]);
 
     // Insert initial chat messages
     const initialMessages = [
@@ -281,7 +282,7 @@ function initDatabase() {
       db.run(`INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)`, msg);
     });
     
-    console.log('✅ Database initialized with notifications support');
+    console.log('✅ Database initialized with complete features');
   });
 }
 
@@ -545,8 +546,8 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     service: 'QuantumCoin API',
-    version: '3.0.0',
-    features: ['notifications', 'chart-data', 'real-time-market', 'admin-panel']
+    version: '1.0.0',
+    features: ['notifications', 'chart-data', 'real-time-market', 'admin-panel', 'withdrawal-system']
   });
 });
 
@@ -554,7 +555,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api', (req, res) => {
   res.json({
     status: "OK",
-    message: "QuantumCoin API v3.0 - Complete with Notifications 🚀",
+    message: "QuantumCoin API v1.0 - Complete with Notifications & Withdrawal System 🚀",
     timestamp: new Date().toISOString(),
     endpoints: {
       auth: "/api/auth",
@@ -565,7 +566,8 @@ app.get('/api', (req, res) => {
       notifications: "/api/user/notifications",
       admin: "/api/admin",
       chat: "/api/chat",
-      health: "/api/health"
+      health: "/api/health",
+      withdrawal: "/api/transactions/withdraw"
     }
   });
 });
@@ -784,6 +786,27 @@ app.get('/api/auth/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// User balance endpoint
+app.get('/api/user/balance', authenticateToken, async (req, res) => {
+  try {
+    const user = await dbQuery.get(
+      'SELECT funding_balance, demo_balance FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      funding_balance: user.funding_balance,
+      demo_balance: user.demo_balance
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch balance' });
+  }
+});
+
 // Admin login
 app.post('/api/auth/admin/login', async (req, res) => {
   try {
@@ -959,6 +982,90 @@ app.get('/api/transactions/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// ========== WITHDRAWAL ROUTES ==========
+app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount, network, wallet_address } = req.body;
+    
+    if (!amount || amount < 10) return res.status(400).json({ error: 'Minimum withdrawal is $10' });
+    if (amount > 50000) return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
+    if (!network || !wallet_address) return res.status(400).json({ error: 'Network and wallet address required' });
+    
+    // Get user with balance
+    const user = await dbQuery.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    if (user.funding_balance < amount) {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+    
+    // Calculate fees
+    const networkFees = { 'BTC': 3.00, 'ETH': 8.00, 'USDT': 1.00 };
+    const networkFee = networkFees[network] || 3.00;
+    const processingFee = amount * 0.01;
+    const totalFees = processingFee + networkFee;
+    const receiveAmount = amount - totalFees;
+    
+    // Deduct from user balance immediately
+    await dbQuery.run('UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?', 
+      [amount, req.user.id]);
+    
+    // Create withdrawal transaction
+    const result = await dbQuery.run(
+      `INSERT INTO transactions (user_id, username, type, amount, fees, status, network, wallet_address, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [req.user.id, user.username, 'withdrawal', amount, totalFees, 'pending', network, wallet_address]
+    );
+    
+    // Create notification for admin
+    await createNotification(
+      1, // Admin ID
+      'info',
+      '🔔 New Withdrawal Request',
+      `${user.username} requested a withdrawal of $${amount.toFixed(2)} via ${network}`,
+      { 
+        transactionId: result.id, 
+        userId: req.user.id, 
+        username: user.username, 
+        amount: amount, 
+        network: network,
+        wallet_address: wallet_address,
+        action: 'review_withdrawal'
+      }
+    );
+    
+    // Create notification for user
+    await createNotification(
+      req.user.id,
+      'info',
+      '📤 Withdrawal Request Submitted',
+      `Your withdrawal request of $${amount.toFixed(2)} has been submitted for admin approval.`,
+      { 
+        transactionId: result.id,
+        amount: amount,
+        network: network,
+        wallet_address: wallet_address,
+        fees: totalFees,
+        receiveAmount: receiveAmount
+      }
+    );
+    
+    // Get updated balance
+    const updatedUser = await dbQuery.get('SELECT funding_balance FROM users WHERE id = ?', [req.user.id]);
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal request submitted for admin approval',
+      transactionId: result.id,
+      amount,
+      fees: totalFees,
+      receiveAmount,
+      funding_balance: updatedUser.funding_balance
+    });
+  } catch (error) {
+    console.error('Withdrawal error:', error);
+    res.status(500).json({ error: 'Failed to create withdrawal request' });
+  }
+});
+
 app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
   try {
     const { amount } = req.body;
@@ -974,19 +1081,18 @@ app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
     const bonus = amount >= 1000 ? amount * 0.05 : 0;
     
     const result = await dbQuery.run(
-      `INSERT INTO transactions (user_id, type, amount, bonus, status, created_at) 
-       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [req.user.id, 'deposit', amount, bonus, 'pending']
+      `INSERT INTO transactions (user_id, username, type, amount, bonus, status, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [req.user.id, req.user.username, 'deposit', amount, bonus, 'pending']
     );
     
     // Create notification for admin
-    const user = await dbQuery.get('SELECT username FROM users WHERE id = ?', [req.user.id]);
     await createNotification(
       1, // Admin user ID
       'info',
       'New Deposit Request',
-      `${user.username} requested a deposit of $${amount.toFixed(2)}`,
-      { transactionId: result.id, userId: req.user.id, username: user.username, amount: amount }
+      `${req.user.username} requested a deposit of $${amount.toFixed(2)}`,
+      { transactionId: result.id, userId: req.user.id, username: req.user.username, amount: amount }
     );
     
     // Create notification for user
@@ -1008,63 +1114,6 @@ app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to create deposit request' });
-  }
-});
-
-app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
-  try {
-    const { amount, network, wallet_address } = req.body;
-    
-    if (!amount || amount < 10) return res.status(400).json({ error: 'Minimum withdrawal is $10' });
-    if (amount > 50000) return res.status(400).json({ error: 'Maximum withdrawal is $50,000' });
-    if (!network || !wallet_address) return res.status(400).json({ error: 'Network and wallet address required' });
-    
-    const user = await dbQuery.get('SELECT funding_balance FROM users WHERE id = ?', [req.user.id]);
-    if (user.funding_balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
-    
-    const fees = { 'BTC': 3.00, 'ETH': 8.00, 'USDT': 1.00 }[network] || 3.00;
-    const processingFee = amount * 0.01;
-    const totalFees = processingFee + fees;
-    const receiveAmount = amount - totalFees;
-    
-    const result = await dbQuery.run(
-      `INSERT INTO transactions (user_id, type, amount, fees, status, network, wallet_address, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [req.user.id, 'withdrawal', amount, totalFees, 'pending', network, wallet_address]
-    );
-    
-    await dbQuery.run('UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?', [amount, req.user.id]);
-    
-    // Create notification for admin
-    const userData = await dbQuery.get('SELECT username FROM users WHERE id = ?', [req.user.id]);
-    await createNotification(
-      1, // Admin user ID
-      'info',
-      'New Withdrawal Request',
-      `${userData.username} requested a withdrawal of $${amount.toFixed(2)} to ${wallet_address} (${network})`,
-      { transactionId: result.id, userId: req.user.id, username: userData.username, amount: amount, network, wallet_address }
-    );
-    
-    // Create notification for user
-    await createNotification(
-      req.user.id,
-      'warning',
-      'Withdrawal Request Submitted',
-      `Your withdrawal request of $${amount.toFixed(2)} has been submitted and is pending approval. Funds will be deducted until approved.`,
-      { transactionId: result.id, amount: amount, network, wallet_address, fees: totalFees, receiveAmount: receiveAmount }
-    );
-    
-    res.json({
-      success: true,
-      message: 'Withdrawal request submitted',
-      transactionId: result.id,
-      amount,
-      fees: totalFees,
-      receiveAmount,
-      funding_balance: user.funding_balance - amount
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create withdrawal request' });
   }
 });
 
@@ -1213,9 +1262,9 @@ async function buyTrade(req, res, symbol, amount, price, account_type, fee, pred
   // Record transaction
   await dbQuery.run(
     `INSERT INTO transactions 
-     (user_id, type, amount, fees, status, created_at) 
-     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-    [req.user.id, 'buy', totalCost, fee, 'completed']
+     (user_id, username, type, amount, fees, status, created_at) 
+     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [req.user.id, req.user.username, 'buy', totalCost, fee, 'completed']
   );
   
   // Get updated user data
@@ -1322,9 +1371,9 @@ async function sellTrade(req, res, symbol, amount, price, account_type) {
   // Record transaction
   await dbQuery.run(
     `INSERT INTO transactions 
-     (user_id, type, amount, fees, status, created_at) 
-     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-    [req.user.id, 'sell', receiveAmount, fee, 'completed']
+     (user_id, username, type, amount, fees, status, created_at) 
+     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [req.user.id, req.user.username, 'sell', receiveAmount, fee, 'completed']
   );
   
   // Get updated user data
@@ -1404,27 +1453,31 @@ app.get('/api/chat/history', async (req, res) => {
 });
 
 // ========== ADMIN ROUTES ==========
+
+// GET /api/admin/stats - Get admin dashboard stats
 app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
   try {
-    const queries = [
-      'SELECT COUNT(*) as total_users FROM users',
-      'SELECT COUNT(*) as active_today FROM users WHERE last_login > datetime("now", "-1 day")',
-      'SELECT SUM(funding_balance) as total_funding FROM users',
-      'SELECT SUM(demo_balance) as total_demo FROM users',
-      'SELECT COUNT(*) as pending_deposits FROM transactions WHERE type = "deposit" AND status = "pending"',
-      'SELECT SUM(amount) as pending_deposit_amount FROM transactions WHERE type = "deposit" AND status = "pending"',
-      'SELECT COUNT(*) as pending_withdrawals FROM transactions WHERE type = "withdrawal" AND status = "pending"',
-      'SELECT SUM(amount) as pending_withdrawal_amount FROM transactions WHERE type = "withdrawal" AND status = "pending"'
-    ];
+    const stats = await Promise.all([
+      dbQuery.get('SELECT COUNT(*) as total_users FROM users'),
+      dbQuery.get('SELECT COUNT(*) as active_today FROM users WHERE last_login > datetime("now", "-1 day")'),
+      dbQuery.get('SELECT SUM(funding_balance) as total_funding FROM users'),
+      dbQuery.get('SELECT SUM(demo_balance) as total_demo FROM users'),
+      dbQuery.get('SELECT COUNT(*) as pending_withdrawals FROM transactions WHERE type = "withdrawal" AND status = "pending"'),
+      dbQuery.get('SELECT SUM(amount) as pending_withdrawal_amount FROM transactions WHERE type = "withdrawal" AND status = "pending"'),
+      dbQuery.get('SELECT COUNT(*) as pending_deposits FROM transactions WHERE type = "deposit" AND status = "pending"'),
+      dbQuery.get('SELECT SUM(amount) as pending_deposit_amount FROM transactions WHERE type = "deposit" AND status = "pending"')
+    ]);
     
-    const stats = {};
-    
-    for (const query of queries) {
-      const result = await dbQuery.get(query);
-      Object.assign(stats, result);
-    }
-    
-    res.json(stats);
+    res.json({
+      total_users: stats[0].total_users,
+      active_today: stats[1].active_today,
+      total_funding: stats[2].total_funding || 0,
+      total_demo: stats[3].total_demo || 0,
+      pending_withdrawals: stats[4].pending_withdrawals,
+      pending_withdrawal_amount: stats[5].pending_withdrawal_amount || 0,
+      pending_deposits: stats[6].pending_deposits,
+      pending_deposit_amount: stats[7].pending_deposit_amount || 0
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch dashboard stats' });
   }
@@ -1473,6 +1526,197 @@ app.get('/api/admin/transactions/completed', authenticateAdmin, async (req, res)
     res.json(transactions);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch completed transactions' });
+  }
+});
+
+// ========== WITHDRAWAL MANAGEMENT ROUTES ==========
+
+// GET /api/admin/withdrawals/pending - Get pending withdrawals (for admin)
+app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
+  try {
+    const withdrawals = await dbQuery.all(
+      `SELECT t.*, u.username, u.email, u.funding_balance 
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       WHERE t.type = 'withdrawal' AND t.status = 'pending'
+       ORDER BY t.created_at DESC`
+    );
+    
+    res.json(withdrawals);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch pending withdrawals' });
+  }
+});
+
+// GET /api/admin/withdrawals - Get all withdrawals for admin
+app.get('/api/admin/withdrawals', authenticateAdmin, async (req, res) => {
+  try {
+    const withdrawals = await dbQuery.all(
+      `SELECT t.*, u.username, u.email, a.username as admin_username
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       LEFT JOIN admins a ON t.admin_id = a.id
+       WHERE t.type = 'withdrawal'
+       ORDER BY t.created_at DESC
+       LIMIT 100`
+    );
+    
+    res.json(withdrawals);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch withdrawals' });
+  }
+});
+
+// GET /api/admin/withdrawals/:id - Get specific withdrawal
+app.get('/api/admin/withdrawals/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const withdrawal = await dbQuery.get(
+      `SELECT t.*, u.username, u.email, u.funding_balance 
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       WHERE t.id = ? AND t.type = 'withdrawal'`,
+      [req.params.id]
+    );
+    
+    if (!withdrawal) {
+      return res.status(404).json({ error: 'Withdrawal not found' });
+    }
+    
+    res.json(withdrawal);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch withdrawal' });
+  }
+});
+
+// POST /api/admin/withdrawals/:id/complete - Admin completes withdrawal
+app.post('/api/admin/withdrawals/:id/complete', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { transaction_hash, notes } = req.body;
+    
+    // Get transaction
+    const transaction = await dbQuery.get(
+      `SELECT t.*, u.username, u.email 
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       WHERE t.id = ?`,
+      [id]
+    );
+    
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    
+    if (transaction.type !== 'withdrawal') {
+      return res.status(400).json({ error: 'Not a withdrawal transaction' });
+    }
+    
+    if (transaction.status !== 'pending') {
+      return res.status(400).json({ error: 'Transaction already processed' });
+    }
+    
+    // Update transaction as completed
+    await dbQuery.run(
+      `UPDATE transactions SET 
+       status = 'completed',
+       admin_approved = 1,
+       admin_id = ?,
+       admin_notes = ?,
+       transaction_hash = ?,
+       completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [req.user.id, notes || 'Withdrawal completed by admin', transaction_hash, id]
+    );
+    
+    // Create notification for user
+    await createNotification(
+      transaction.user_id,
+      'success',
+      '✅ Withdrawal Completed',
+      `Your withdrawal of $${transaction.amount.toFixed(2)} has been completed. Transaction Hash: ${transaction_hash}`,
+      { 
+        transactionId: id,
+        amount: transaction.amount,
+        transaction_hash: transaction_hash,
+        network: transaction.network,
+        wallet_address: transaction.wallet_address,
+        action: 'view_transaction'
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal marked as completed',
+      transactionId: id,
+      amount: transaction.amount,
+      username: transaction.username
+    });
+  } catch (error) {
+    console.error('Complete withdrawal error:', error);
+    res.status(500).json({ error: 'Failed to complete withdrawal' });
+  }
+});
+
+// POST /api/admin/withdrawals/:id/reject - Admin rejects withdrawal
+app.post('/api/admin/withdrawals/:id/reject', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+    
+    const transaction = await dbQuery.get(
+      `SELECT t.*, u.username 
+       FROM transactions t 
+       JOIN users u ON t.user_id = u.id 
+       WHERE t.id = ?`,
+      [id]
+    );
+    
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    
+    // Return funds to user
+    await dbQuery.run(
+      'UPDATE users SET funding_balance = funding_balance + ? WHERE id = ?',
+      [transaction.amount, transaction.user_id]
+    );
+    
+    // Update transaction as rejected
+    await dbQuery.run(
+      `UPDATE transactions SET 
+       status = 'rejected',
+       admin_approved = 0,
+       admin_id = ?,
+       admin_notes = ?,
+       completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [req.user.id, notes || 'Withdrawal rejected by admin', id]
+    );
+    
+    // Create notification for user
+    await createNotification(
+      transaction.user_id,
+      'danger',
+      '❌ Withdrawal Rejected',
+      `Your withdrawal of $${transaction.amount.toFixed(2)} has been rejected. Funds have been returned to your account.`,
+      { 
+        transactionId: id,
+        amount: transaction.amount,
+        notes: notes,
+        action: 'contact_support'
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal rejected and funds returned',
+      transactionId: id,
+      amount: transaction.amount,
+      username: transaction.username
+    });
+  } catch (error) {
+    console.error('Reject withdrawal error:', error);
+    res.status(500).json({ error: 'Failed to reject withdrawal' });
   }
 });
 
@@ -1717,7 +1961,17 @@ app.use('/api/*', (req, res) => {
         send: 'POST /api/admin/notify-user (Admin)'
       },
       chat: 'GET /api/chat/history',
-      admin: 'Various routes (Admin Auth)'
+      admin: {
+        stats: 'GET /api/admin/stats (Admin)',
+        users: 'GET /api/admin/users (Admin)',
+        withdrawals: {
+          pending: 'GET /api/admin/withdrawals/pending (Admin)',
+          all: 'GET /api/admin/withdrawals (Admin)',
+          detail: 'GET /api/admin/withdrawals/:id (Admin)',
+          complete: 'POST /api/admin/withdrawals/:id/complete (Admin)',
+          reject: 'POST /api/admin/withdrawals/:id/reject (Admin)'
+        }
+      }
     }
   });
 });
@@ -1748,15 +2002,16 @@ setInterval(() => {
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`🚀 QuantumCoin API v3.0 running on port ${PORT}`);
+  console.log(`🚀 QuantumCoin API v4.0 running on port ${PORT}`);
   console.log(`📊 Market Data: Live prices for ${Object.keys(cryptoData).length} coins`);
   console.log(`📈 Chart Data: Fixed and working for all timeframes`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
   console.log(`📡 WebSocket: Real-time updates enabled`);
-  console.log(`📊 Admin login: admin / admin123`);
+  console.log(`👑 Admin login: admin / admin123`);
   console.log(`👤 User login: testuser / password123`);
   console.log(`💰 Test user funding balance: $5,000.00`);
   console.log(`🔔 Notification System: Active`);
+  console.log(`💸 Withdrawal System: Complete`);
   console.log(`💡 Features:`);
   console.log(`   • Complete notification system`);
   console.log(`   • Fixed chart data generation`);
@@ -1764,6 +2019,7 @@ server.listen(PORT, () => {
   console.log(`   • WebSocket support`);
   console.log(`   • Admin approval system`);
   console.log(`   • Live chat system`);
+  console.log(`   • Complete withdrawal management`);
 });
 
 module.exports = { app, server };
