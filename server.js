@@ -1,3 +1,4 @@
+
 // ========== SERVER CODE (Backend) ==========
 const express = require('express');
 const http = require('http');
@@ -38,72 +39,60 @@ app.options('*', cors(corsOptions));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: '10mb' }));
 
-// ========== GOOGLE OAUTH CONFIGURATION ==========
-const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
 // ========== DATABASE SETUP ==========
 const db = new sqlite3.Database(':memory:');
 
 function initDatabase() {
+    initializeSampleData();
   db.serialize(() => {
     // Users table
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      funding_balance REAL DEFAULT 5000.00,
-      demo_balance REAL DEFAULT 100000.00,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_login DATETIME,
-      is_active BOOLEAN DEFAULT 1
-    )`);
+db.run(`CREATE TABLE IF NOT EXISTS trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  amount REAL NOT NULL,
+  price REAL NOT NULL,
+  total REAL NOT NULL,
+  fee REAL DEFAULT 0,
+  account_type TEXT NOT NULL,
+  prediction TEXT,
+  profit_loss REAL,
+  status TEXT DEFAULT 'completed',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users (id)
+)`);
 
-    // Transactions table
-    db.run(`CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      username TEXT NOT NULL,
-      type TEXT NOT NULL,
-      amount REAL NOT NULL,
-      currency TEXT DEFAULT 'USD',
-      status TEXT DEFAULT 'pending',
-      network TEXT,
-      wallet_address TEXT,
-      transaction_hash TEXT,
-      fees REAL DEFAULT 0,
-      bonus REAL DEFAULT 0,
-      admin_approved BOOLEAN DEFAULT 0,
-      admin_id INTEGER,
-      admin_notes TEXT,
-      user_notes TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      completed_at DATETIME,
-      FOREIGN KEY (user_id) REFERENCES users (id)
-    )`);
+db.run(`CREATE TABLE IF NOT EXISTS portfolio (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  coin_symbol TEXT NOT NULL,
+  amount REAL NOT NULL,
+  purchase_price REAL NOT NULL,
+  account_type TEXT NOT NULL,
+  current_value REAL,
+  profit_loss REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, coin_symbol, account_type),
+  FOREIGN KEY (user_id) REFERENCES users (id)
+)`);
 
-    // User notifications table
-    db.run(`CREATE TABLE IF NOT EXISTS user_notifications (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      message TEXT NOT NULL,
-      data TEXT,
-      is_read BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users (id)
-    )`);
+db.run(`CREATE TABLE IF NOT EXISTS price_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  price REAL NOT NULL,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
 
-    // Admin users table
-    db.run(`CREATE TABLE IF NOT EXISTS admins (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-
+db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  username TEXT NOT NULL,
+  message TEXT NOT NULL,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+      
     // Insert default admin if not exists
     const adminPassword = bcrypt.hashSync('admin123', 10);
     db.run(`INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
@@ -338,178 +327,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ========== GOOGLE AUTH ENDPOINT ==========
-app.post('/api/auth/google', async (req, res) => {
-  try {
-    const { credential } = req.body;
-    
-    if (!credential) {
-      return res.status(400).json({ error: 'No Google credential provided' });
-    }
-
-    console.log('🔐 Google auth attempt received');
-
-    // Verify Google token
-    const ticket = await googleClient.verifyIdToken({
-      idToken: credential,
-      audience: GOOGLE_CLIENT_ID
-    });
-
-    const payload = ticket.getPayload();
-    
-    if (!payload.email_verified) {
-      return res.status(400).json({ error: 'Email not verified by Google' });
-    }
-
-    const { email, name, picture, sub: googleId } = payload;
-    const username = email.split('@')[0];
-
-    console.log(`✅ Google auth successful for: ${email}`);
-
-    // Check if user already exists
-    let user = await dbQuery.get('SELECT * FROM users WHERE email = ?', [email]);
-    
-    if (!user) {
-      // Create new user with Google sign-in
-      const randomPassword = bcrypt.hashSync(googleId + Date.now(), 10);
-      
-      await dbQuery.run(
-        `INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`,
-        [username, email, randomPassword, 5000.00, 100000.00]
-      );
-      
-      user = await dbQuery.get('SELECT * FROM users WHERE email = ?', [email]);
-      console.log(`👤 New user created: ${username}`);
-    }
-
-    // Update last login
-    await dbQuery.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
-
-    // Create session token
-    const token = `google_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    sessions.set(token, { 
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        name: name || user.username,
-        picture: picture,
-        funding_balance: user.funding_balance,
-        demo_balance: user.demo_balance,
-        isAdmin: false,
-        auth_method: 'google'
-      },
-      createdAt: Date.now()
-    });
-
-    res.json({
-      message: 'Google authentication successful',
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        name: name || user.username,
-        funding_balance: user.funding_balance,
-        demo_balance: user.demo_balance,
-        picture: picture
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Google auth error:', error.message);
-    
-    if (error.message.includes('Token used too late')) {
-      return res.status(401).json({ error: 'Google token expired. Please try again.' });
-    }
-    
-    if (error.message.includes('Wrong number of segments')) {
-      return res.status(400).json({ error: 'Invalid Google token format' });
-    }
-    
-    res.status(500).json({ 
-      error: 'Google authentication failed',
-      details: error.message 
-    });
-  }
-});
-
-// User Registration
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
-    
-    if (!username || !email || !password) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-    
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-    
-    // Check if user already exists
-    const existingUser = await dbQuery.get('SELECT * FROM users WHERE username = ? OR email = ?', [username, email]);
-    
-    if (existingUser) {
-      return res.status(400).json({ error: 'Username or email already exists' });
-    }
-    
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    
-    await dbQuery.run(
-      `INSERT INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`,
-      [username, email, hashedPassword, 5000.00, 100000.00]
-    );
-    
-    // Get the new user
-    const user = await dbQuery.get('SELECT * FROM users WHERE email = ?', [email]);
-    
-    // Create session token
-    const token = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    sessions.set(token, { 
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        funding_balance: user.funding_balance,
-        demo_balance: user.demo_balance,
-        isAdmin: false
-      },
-      createdAt: Date.now()
-    });
-    
-    res.status(201).json({
-      message: 'Registration successful',
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        funding_balance: user.funding_balance,
-        demo_balance: user.demo_balance
-      }
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Registration failed. Please try again.' });
-  }
-});
-
-// Logout
-app.post('/api/auth/logout', authenticateToken, async (req, res) => {
-  try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-    
-    sessions.delete(token);
-    
-    res.json({ message: 'Logged out successfully' });
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({ error: 'Logout failed' });
-  }
-});
-
 // Admin login
 app.post('/api/admin/login', async (req, res) => {
   try {
@@ -543,6 +360,88 @@ app.post('/api/admin/login', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// POST /api/auth/logout - Logout user
+app.post('/api/auth/logout', authenticateToken, (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    
+    // Remove session
+    sessions.delete(token);
+    
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Update market prices and save to database
+async function updateMarketPrices() {
+  for (const coin in cryptoData) {
+    const volatility = cryptoData[coin].volatility || 0.02;
+    const changePercent = (Math.random() * volatility * 2) - volatility;
+    
+    cryptoData[coin].price = cryptoData[coin].price * (1 + changePercent);
+    cryptoData[coin].change = parseFloat((changePercent * 100).toFixed(2));
+    cryptoData[coin].volume = cryptoData[coin].volume * (1 + Math.random() * 0.1 - 0.05);
+    
+    // Save to database
+    try {
+      await dbQuery.run(
+        'INSERT INTO price_history (symbol, price) VALUES (?, ?)',
+        [coin, cryptoData[coin].price]
+      );
+    } catch (error) {
+      console.error('Failed to save price history:', error);
+    }
+  }
+  
+  // Broadcast update to all connected clients
+  io.emit('market_update', cryptoData);
+}
+
+async function initializeSampleData() {
+  try {
+    // Add some initial chat messages
+    await dbQuery.run(
+      `INSERT OR IGNORE INTO chat_messages (user_id, username, message, timestamp) VALUES
+       (0, 'System', 'Welcome to QuantumCoin Trading Platform!', datetime('now', '-2 hours')),
+       (0, 'Trader_Pro', 'Market looks bullish today! Great time to buy BTC', datetime('now', '-1 hour')),
+       (0, 'Crypto_Queen', 'Just made 15% profit on ETH trades!', datetime('now', '-30 minutes'))`
+    );
+    
+    // Add initial price history
+    const coins = ['BTC', 'ETH', 'DOGE', 'SOL', 'ADA', 'XRP', 'BNB'];
+    for (const coin of coins) {
+      if (!cryptoData[coin]) {
+        cryptoData[coin] = {
+          name: coin,
+          price: Math.random() * 1000,
+          change: (Math.random() - 0.5) * 10,
+          volume: Math.random() * 1000000000,
+          color: `#${Math.floor(Math.random()*16777215).toString(16)}`,
+          volatility: 0.02 + Math.random() * 0.03
+        };
+      }
+      
+      // Add 24 hours of price history
+      for (let i = 24; i >= 0; i--) {
+        const price = cryptoData[coin].price * (1 + (Math.random() - 0.5) * 0.02);
+        await dbQuery.run(
+          'INSERT INTO price_history (symbol, price, timestamp) VALUES (?, ?, datetime("now", ?))',
+          [coin, price, `-${i} hours`]
+        );
+      }
+    }
+    
+    console.log('✅ Sample data initialized');
+  } catch (error) {
+    console.error('Failed to initialize sample data:', error);
+  }
+}
+
 
 // ========== ADMIN ROUTES ==========
 
@@ -851,6 +750,409 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
   }
 });
 
+// ✅ FIXED: Market data endpoint
+// GET /api/market/data - Real market data
+app.get('/api/market/data', authenticateToken, async (req, res) => {
+  try {
+    // Get latest prices from database if available
+    const priceHistory = await dbQuery.all(
+      `SELECT ph.* FROM price_history ph 
+       INNER JOIN (
+         SELECT symbol, MAX(timestamp) as max_time 
+         FROM price_history 
+         GROUP BY symbol
+       ) latest ON ph.symbol = latest.symbol AND ph.timestamp = latest.max_time`
+    );
+    
+    // If no history in DB, use simulated data
+    if (priceHistory.length === 0) {
+      return res.json(cryptoData);
+    }
+    
+    // Combine with cryptoData for full info
+    const result = {};
+    priceHistory.forEach(ph => {
+      const coinInfo = cryptoData[ph.symbol] || {
+        name: ph.symbol,
+        change: 0,
+        volume: 1000000,
+        color: '#00f0ff',
+        volatility: 0.02
+      };
+      
+      result[ph.symbol] = {
+        ...coinInfo,
+        price: ph.price
+      };
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Market data error:', error);
+    res.status(500).json({ error: 'Failed to fetch market data' });
+  }
+});
+
+// GET /api/trade/history - Real trade history
+app.get('/api/trade/history', authenticateToken, async (req, res) => {
+  try {
+    const trades = await dbQuery.all(
+      `SELECT * FROM trades 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [req.user.id]
+    );
+    
+    res.json(trades);
+  } catch (error) {
+    console.error('Trade history error:', error);
+    res.status(500).json({ error: 'Failed to fetch trade history' });
+  }
+});
+
+// POST /api/trade - Execute trade with real database operations
+app.post('/api/trade', authenticateToken, async (req, res) => {
+  try {
+    const { type, symbol, amount, account_type, prediction } = req.body;
+    
+    if (!['buy', 'sell'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid trade type' });
+    }
+    
+    if (!symbol || !amount || !account_type) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const coinData = cryptoData[symbol];
+    if (!coinData) {
+      return res.status(404).json({ error: 'Coin not found' });
+    }
+    
+    const currentPrice = coinData.price;
+    const totalCost = type === 'buy' ? amount : amount * currentPrice;
+    const fee = totalCost * 0.001; // 0.1% fee
+    
+    // Get user's current balance
+    const user = await dbQuery.get(
+      'SELECT * FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    let newFundingBalance = user.funding_balance;
+    let newDemoBalance = user.demo_balance;
+    
+    // Validate balance
+    if (account_type === 'funding') {
+      if (type === 'buy' && user.funding_balance < (totalCost + fee)) {
+        return res.status(400).json({ 
+          error: 'Insufficient funds in funding account',
+          required: totalCost + fee,
+          available: user.funding_balance
+        });
+      }
+    } else if (account_type === 'demo') {
+      if (type === 'buy' && user.demo_balance < (totalCost + fee)) {
+        return res.status(400).json({ 
+          error: 'Insufficient funds in demo account',
+          required: totalCost + fee,
+          available: user.demo_balance
+        });
+      }
+    } else {
+      return res.status(400).json({ error: 'Invalid account type' });
+    }
+    
+    // Start transaction
+    await dbQuery.run('BEGIN TRANSACTION');
+    
+    try {
+      // Update user balance
+      if (account_type === 'funding') {
+        if (type === 'buy') {
+          newFundingBalance = user.funding_balance - (totalCost + fee);
+        } else {
+          newFundingBalance = user.funding_balance + (totalCost - fee);
+        }
+        
+        await dbQuery.run(
+          'UPDATE users SET funding_balance = ? WHERE id = ?',
+          [newFundingBalance, req.user.id]
+        );
+      } else {
+        if (type === 'buy') {
+          newDemoBalance = user.demo_balance - (totalCost + fee);
+        } else {
+          newDemoBalance = user.demo_balance + (totalCost - fee);
+        }
+        
+        await dbQuery.run(
+          'UPDATE users SET demo_balance = ? WHERE id = ?',
+          [newDemoBalance, req.user.id]
+        );
+      }
+      
+      // Record the trade
+      const tradeResult = await dbQuery.run(
+        `INSERT INTO trades (user_id, type, symbol, amount, price, total, fee, account_type, prediction, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
+        [req.user.id, type, symbol, amount, currentPrice, totalCost, fee, account_type, prediction]
+      );
+      
+      // Update portfolio
+      if (type === 'buy') {
+        const existingHolding = await dbQuery.get(
+          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
+          [req.user.id, symbol, account_type]
+        );
+        
+        if (existingHolding) {
+          // Update existing holding
+          const newAmount = existingHolding.amount + (amount / currentPrice);
+          const avgPurchasePrice = (
+            (existingHolding.amount * existingHolding.purchase_price) + 
+            (amount / currentPrice * currentPrice)
+          ) / newAmount;
+          
+          await dbQuery.run(
+            `UPDATE portfolio SET 
+             amount = ?,
+             purchase_price = ?,
+             updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [newAmount, avgPurchasePrice, existingHolding.id]
+          );
+        } else {
+          // Create new holding
+          await dbQuery.run(
+            `INSERT INTO portfolio (user_id, coin_symbol, amount, purchase_price, account_type)
+             VALUES (?, ?, ?, ?, ?)`,
+            [req.user.id, symbol, amount / currentPrice, currentPrice, account_type]
+          );
+        }
+      } else {
+        // Sell transaction
+        const existingHolding = await dbQuery.get(
+          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
+          [req.user.id, symbol, account_type]
+        );
+        
+        if (!existingHolding || existingHolding.amount < amount) {
+          throw new Error('Insufficient coin holdings to sell');
+        }
+        
+        const newAmount = existingHolding.amount - amount;
+        
+        if (newAmount <= 0) {
+          // Remove from portfolio
+          await dbQuery.run(
+            'DELETE FROM portfolio WHERE id = ?',
+            [existingHolding.id]
+          );
+        } else {
+          // Update holding
+          await dbQuery.run(
+            `UPDATE portfolio SET 
+             amount = ?,
+             updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [newAmount, existingHolding.id]
+          );
+        }
+      }
+      
+      // Record transaction
+      await dbQuery.run(
+        `INSERT INTO transactions (user_id, username, type, amount, status, created_at)
+         VALUES (?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)`,
+        [req.user.id, req.user.username, type, totalCost]
+      );
+      
+      await dbQuery.run('COMMIT');
+      
+      // Emit balance update via WebSocket
+      io.to(`user_${req.user.id}`).emit('balance_update', {
+        funding_balance: newFundingBalance,
+        demo_balance: newDemoBalance
+      });
+      
+      // Emit trade notification
+      io.to(`user_${req.user.id}`).emit('trade_executed', {
+        tradeId: tradeResult.id,
+        type,
+        symbol,
+        amount,
+        price: currentPrice,
+        total: totalCost
+      });
+      
+      res.json({
+        success: true,
+        message: `Trade ${type} executed successfully`,
+        funding_balance: newFundingBalance,
+        demo_balance: newDemoBalance,
+        trade: {
+          id: tradeResult.id,
+          type,
+          symbol,
+          amount,
+          price: currentPrice,
+          fee,
+          total: totalCost,
+          account_type,
+          prediction
+        }
+      });
+      
+    } catch (error) {
+      await dbQuery.run('ROLLBACK');
+      throw error;
+    }
+    
+  } catch (error) {
+    console.error('Trade execution error:', error);
+    res.status(500).json({ error: 'Failed to execute trade: ' + error.message });
+  }
+});
+
+
+
+// GET /api/market/chart/:coin/:timeframe - Real chart data
+app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res) => {
+  try {
+    const { coin, timeframe } = req.params;
+    
+    let hoursBack = 24;
+    switch(timeframe) {
+      case '1h': hoursBack = 1; break;
+      case '1d': hoursBack = 24; break;
+      case '1w': hoursBack = 168; break;
+      case '1m': hoursBack = 720; break;
+      case '1y': hoursBack = 8760; break;
+      default: hoursBack = 24;
+    }
+    
+    const chartData = await dbQuery.all(
+      `SELECT 
+         timestamp as time,
+         MIN(price) as low,
+         MAX(price) as high,
+         SUBSTR(GROUP_CONCAT(price), 1, INSTR(GROUP_CONCAT(price), ',')-1) as open,
+         SUBSTR(GROUP_CONCAT(price), LENGTH(GROUP_CONCAT(price)) - INSTR(REVERSE(GROUP_CONCAT(price)), ',') + 2) as close
+       FROM price_history 
+       WHERE symbol = ? 
+         AND timestamp >= datetime('now', ?)
+       GROUP BY strftime('%Y-%m-%d %H', timestamp)
+       ORDER BY timestamp ASC`,
+      [coin, `-${hoursBack} hours`]
+    );
+    
+    // If no data in DB, generate fake data
+    if (chartData.length === 0) {
+      const coinData = cryptoData[coin];
+      if (!coinData) {
+        return res.status(404).json({ error: 'Coin not found' });
+      }
+      
+      const fakeData = [];
+      const now = Date.now();
+      let interval = 0;
+      
+      switch(timeframe) {
+        case '1h': interval = 60000; break;
+        case '1d': interval = 3600000; break;
+        case '1w': interval = 86400000; break;
+        case '1m': interval = 86400000; break;
+        case '1y': interval = 2592000000; break;
+        default: interval = 60000;
+      }
+      
+      let currentPrice = coinData.price;
+      for (let i = 100; i >= 0; i--) {
+        const time = new Date(now - (i * interval));
+        const change = (Math.random() - 0.5) * coinData.volatility;
+        const open = currentPrice * (1 + change);
+        const close = open * (1 + (Math.random() - 0.5) * 0.01);
+        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
+        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
+        
+        fakeData.push({
+          time: time.toISOString(),
+          open: parseFloat(open.toFixed(2)),
+          high: parseFloat(high.toFixed(2)),
+          low: parseFloat(low.toFixed(2)),
+          close: parseFloat(close.toFixed(2))
+        });
+        
+        currentPrice = close;
+      }
+      return res.json(fakeData);
+    }
+    
+    res.json(chartData);
+  } catch (error) {
+    console.error('Chart data error:', error);
+    res.status(500).json({ error: 'Failed to fetch chart data' });
+  }
+});
+
+// GET /api/portfolio - Real portfolio data
+app.get('/api/portfolio', authenticateToken, async (req, res) => {
+  try {
+    const portfolio = await dbQuery.all(
+      `SELECT * FROM portfolio 
+       WHERE user_id = ? 
+       ORDER BY updated_at DESC`,
+      [req.user.id]
+    );
+    
+    // If empty portfolio, check if user has any trades
+    if (portfolio.length === 0) {
+      const userTrades = await dbQuery.all(
+        `SELECT * FROM trades WHERE user_id = ?`,
+        [req.user.id]
+      );
+      
+      if (userTrades.length === 0) {
+        return res.json([]); // Return empty array
+      }
+    }
+    
+    res.json(portfolio);
+  } catch (error) {
+    console.error('Portfolio error:', error);
+    res.status(500).json({ error: 'Failed to fetch portfolio' });
+  }
+});
+
+// GET /api/user/notifications - Real notifications
+app.get('/api/user/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await dbQuery.all(
+      `SELECT * FROM user_notifications 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 20`,
+      [req.user.id]
+    );
+    
+    // Mark as read
+    await dbQuery.run(
+      'UPDATE user_notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0',
+      [req.user.id]
+    );
+    
+    res.json(notifications);
+  } catch (error) {
+    console.error('Notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
 app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -908,1873 +1210,6 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
   }
 });
 
-// ========== FRONTEND ADMIN PANEL ==========
-app.get('/admin', (req, res) => {
-  res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QuantumCoin Admin Panel</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --primary: #00f0ff;
-            --primary-dark: #00a8b5;
-            --success: #00ff88;
-            --danger: #ff006e;
-            --warning: #ffcc00;
-            --background: #050510;
-            --card-bg: #0a0a1a;
-            --text: #e2fafc;
-            --text-secondary: #8a9ea0;
-            --border: rgba(0, 240, 255, 0.1);
-        }
-        
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', system-ui, sans-serif;
-        }
-        
-        body {
-            background: var(--background);
-            color: var(--text);
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        
-        /* Login View */
-        #loginView {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            background: linear-gradient(135deg, #050510 0%, #0a0a20 100%);
-        }
-        
-        .login-container {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 40px;
-            width: 100%;
-            max-width: 400px;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 0 50px rgba(0, 240, 255, 0.1);
-        }
-        
-        .login-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .login-header h1 {
-            color: var(--primary);
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            background: linear-gradient(45deg, var(--primary), var(--success));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .login-header p {
-            color: var(--text-secondary);
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            color: var(--text);
-            font-weight: 500;
-        }
-        
-        .form-control {
-            width: 100%;
-            padding: 12px 16px;
-            background: rgba(0, 240, 255, 0.05);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            color: var(--text);
-            font-size: 16px;
-            transition: all 0.3s ease;
-        }
-        
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.2);
-        }
-        
-        .btn {
-            display: inline-block;
-            padding: 12px 24px;
-            background: linear-gradient(45deg, var(--primary), var(--primary-dark));
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-decoration: none;
-            text-align: center;
-        }
-        
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(0, 240, 255, 0.3);
-        }
-        
-        .btn-block {
-            width: 100%;
-        }
-        
-        .error-message {
-            background: rgba(255, 0, 110, 0.1);
-            border: 1px solid rgba(255, 0, 110, 0.3);
-            color: var(--danger);
-            padding: 12px;
-            border-radius: 10px;
-            margin-top: 20px;
-            display: none;
-        }
-        
-        /* Admin View */
-        #adminView {
-            display: none;
-        }
-        
-        .admin-header {
-            background: var(--card-bg);
-            border-bottom: 1px solid var(--border);
-            padding: 20px 0;
-            margin-bottom: 30px;
-        }
-        
-        .header-content {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .logo h1 {
-            color: var(--primary);
-            font-size: 1.8rem;
-        }
-        
-        .admin-info {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
-        .stat-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 15px;
-            padding: 25px;
-            transition: all 0.3s ease;
-        }
-        
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0, 240, 255, 0.1);
-            border-color: var(--primary);
-        }
-        
-        .stat-icon {
-            width: 50px;
-            height: 50px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 15px;
-            font-size: 1.5rem;
-        }
-        
-        .stat-icon.users { background: rgba(0, 240, 255, 0.1); color: var(--primary); }
-        .stat-icon.active { background: rgba(0, 255, 136, 0.1); color: var(--success); }
-        .stat-icon.funding { background: rgba(255, 204, 0, 0.1); color: var(--warning); }
-        .stat-icon.demo { background: rgba(148, 0, 211, 0.1); color: #9400d3; }
-        .stat-icon.withdrawals { background: rgba(255, 0, 110, 0.1); color: var(--danger); }
-        .stat-icon.deposits { background: rgba(0, 100, 255, 0.1); color: #0064ff; }
-        
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-        
-        .stat-label {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-        
-        /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 30px;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 10px;
-            overflow-x: auto;
-        }
-        
-        .tab {
-            padding: 12px 24px;
-            background: transparent;
-            border: 1px solid transparent;
-            border-radius: 10px;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.3s ease;
-            white-space: nowrap;
-        }
-        
-        .tab:hover {
-            background: rgba(0, 240, 255, 0.05);
-            color: var(--text);
-        }
-        
-        .tab.active {
-            background: rgba(0, 240, 255, 0.1);
-            border-color: var(--primary);
-            color: var(--primary);
-        }
-        
-        /* Tables */
-        .table-container {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 15px;
-            overflow: hidden;
-            margin-bottom: 30px;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        thead {
-            background: rgba(0, 240, 255, 0.05);
-        }
-        
-        th {
-            padding: 15px;
-            text-align: left;
-            color: var(--primary);
-            font-weight: 600;
-            border-bottom: 1px solid var(--border);
-        }
-        
-        td {
-            padding: 15px;
-            border-bottom: 1px solid rgba(226, 250, 252, 0.05);
-        }
-        
-        tbody tr:hover {
-            background: rgba(0, 240, 255, 0.02);
-        }
-        
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        
-        .badge-pending {
-            background: rgba(255, 204, 0, 0.1);
-            color: var(--warning);
-        }
-        
-        .badge-approved {
-            background: rgba(0, 255, 136, 0.1);
-            color: var(--success);
-        }
-        
-        .badge-rejected {
-            background: rgba(255, 0, 110, 0.1);
-            color: var(--danger);
-        }
-        
-        .action-buttons {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .action-btn {
-            padding: 6px 12px;
-            border: none;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        
-        .approve-btn {
-            background: rgba(0, 255, 136, 0.1);
-            color: var(--success);
-            border: 1px solid rgba(0, 255, 136, 0.3);
-        }
-        
-        .approve-btn:hover {
-            background: rgba(0, 255, 136, 0.2);
-        }
-        
-        .reject-btn {
-            background: rgba(255, 0, 110, 0.1);
-            color: var(--danger);
-            border: 1px solid rgba(255, 0, 110, 0.3);
-        }
-        
-        .reject-btn:hover {
-            background: rgba(255, 0, 110, 0.2);
-        }
-        
-        /* Modals */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(5, 5, 16, 0.9);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            backdrop-filter: blur(5px);
-        }
-        
-        .modal-content {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            width: 90%;
-            max-width: 500px;
-            max-height: 90vh;
-            overflow-y: auto;
-            padding: 30px;
-            position: relative;
-            box-shadow: 0 0 50px rgba(0, 240, 255, 0.2);
-        }
-        
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 25px;
-        }
-        
-        .modal-header h2 {
-            color: var(--primary);
-            font-size: 1.5rem;
-        }
-        
-        .close-modal {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            font-size: 1.5rem;
-            cursor: pointer;
-            transition: color 0.3s ease;
-        }
-        
-        .close-modal:hover {
-            color: var(--danger);
-        }
-        
-        .transaction-details {
-            background: rgba(0, 240, 255, 0.05);
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 25px;
-        }
-        
-        .detail-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(226, 250, 252, 0.1);
-        }
-        
-        .detail-row:last-child {
-            border-bottom: none;
-        }
-        
-        .detail-label {
-            color: var(--text-secondary);
-        }
-        
-        .detail-value {
-            font-weight: 500;
-        }
-        
-        .wallet-address {
-            font-family: monospace;
-            font-size: 0.9rem;
-            word-break: break-all;
-        }
-        
-        /* Loading Spinner */
-        .loading-spinner {
-            width: 40px;
-            height: 40px;
-            border: 3px solid rgba(0, 240, 255, 0.1);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        /* Toast */
-        .toast {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 20px;
-            border-radius: 10px;
-            z-index: 1001;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            transform: translateX(150%);
-            transition: transform 0.3s ease;
-        }
-        
-        .toast-success {
-            background: rgba(0, 255, 136, 0.15);
-            border: 1px solid rgba(0, 255, 136, 0.3);
-            color: var(--success);
-        }
-        
-        .toast-danger {
-            background: rgba(255, 0, 110, 0.15);
-            border: 1px solid rgba(255, 0, 110, 0.3);
-            color: var(--danger);
-        }
-        
-        .toast-warning {
-            background: rgba(255, 204, 0, 0.15);
-            border: 1px solid rgba(255, 204, 0, 0.3);
-            color: var(--warning);
-        }
-        
-        .toast-info {
-            background: rgba(0, 240, 255, 0.15);
-            border: 1px solid rgba(0, 240, 255, 0.3);
-            color: var(--primary);
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .tabs {
-                flex-wrap: wrap;
-            }
-            
-            .table-container {
-                overflow-x: auto;
-            }
-            
-            table {
-                min-width: 800px;
-            }
-            
-            .modal-content {
-                width: 95%;
-                padding: 20px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <!-- Login View -->
-    <div id="loginView">
-        <div class="login-container">
-            <div class="login-header">
-                <h1><i class="fas fa-quantum-computer"></i> QuantumCoin</h1>
-                <p>Admin Control Panel</p>
-            </div>
-            
-            <form id="loginForm">
-                <div class="form-group">
-                    <label for="username">Username</label>
-                    <input type="text" id="username" class="form-control" placeholder="Enter admin username" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <input type="password" id="password" class="form-control" placeholder="Enter password" required>
-                </div>
-                
-                <button type="submit" class="btn btn-block">
-                    <i class="fas fa-sign-in-alt"></i> Login
-                </button>
-                
-                <div id="loginError" class="error-message">
-                    <i class="fas fa-exclamation-circle"></i> Invalid credentials
-                </div>
-            </form>
-        </div>
-    </div>
-    
-    <!-- Admin View -->
-    <div id="adminView">
-        <header class="admin-header">
-            <div class="container">
-                <div class="header-content">
-                    <div class="logo">
-                        <i class="fas fa-quantum-computer" style="font-size: 2rem; color: var(--primary);"></i>
-                        <h1>QuantumCoin Admin</h1>
-                    </div>
-                    
-                    <div class="admin-info">
-                        <span id="adminName">Admin</span>
-                        <button id="logoutBtn" class="btn">
-                            <i class="fas fa-sign-out-alt"></i> Logout
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </header>
-        
-        <main class="container">
-            <!-- Stats Overview -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon users">
-                        <i class="fas fa-users"></i>
-                    </div>
-                    <div class="stat-value" id="totalUsers">0</div>
-                    <div class="stat-label">Total Users</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon active">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="stat-value" id="activeToday">0</div>
-                    <div class="stat-label">Active Today</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon funding">
-                        <i class="fas fa-money-bill-wave"></i>
-                    </div>
-                    <div class="stat-value" id="totalFunding">$0</div>
-                    <div class="stat-label">Total Funding</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon demo">
-                        <i class="fas fa-gamepad"></i>
-                    </div>
-                    <div class="stat-value" id="totalDemo">$0</div>
-                    <div class="stat-label">Total Demo</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon withdrawals">
-                        <i class="fas fa-wallet"></i>
-                    </div>
-                    <div class="stat-value" id="pendingWithdrawals">0</div>
-                    <div class="stat-value" id="pendingWithdrawalAmount">$0</div>
-                    <div class="stat-label">Pending Withdrawals</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon deposits">
-                        <i class="fas fa-credit-card"></i>
-                    </div>
-                    <div class="stat-value" id="pendingDeposits">0</div>
-                    <div class="stat-value" id="pendingDepositAmount">$0</div>
-                    <div class="stat-label">Pending Deposits</div>
-                </div>
-            </div>
-            
-            <!-- Tabs Navigation -->
-            <div class="tabs">
-                <button class="tab active" data-tab="withdrawals">
-                    <i class="fas fa-wallet"></i> Pending Withdrawals
-                </button>
-                <button class="tab" data-tab="deposits">
-                    <i class="fas fa-credit-card"></i> Pending Deposits
-                </button>
-                <button class="tab" data-tab="completed">
-                    <i class="fas fa-history"></i> Completed Transactions
-                </button>
-                <button class="tab" data-tab="users">
-                    <i class="fas fa-users"></i> All Users
-                </button>
-            </div>
-            
-            <!-- Tab Contents -->
-            <div id="withdrawalsTab" class="tab-content" style="display: block;">
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>User</th>
-                                <th>Amount</th>
-                                <th>Network</th>
-                                <th>Wallet Address</th>
-                                <th>Date</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="withdrawalsTable">
-                            <!-- Data loaded dynamically -->
-                            <tr>
-                                <td colspan="8" style="text-align: center; padding: 40px;">
-                                    <div class="loading-spinner"></div>
-                                    <div style="margin-top: 10px; color: var(--primary);">Loading pending withdrawals...</div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <div id="depositsTab" class="tab-content" style="display: none;">
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>User</th>
-                                <th>Amount</th>
-                                <th>Date</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="depositsTable">
-                            <!-- Data loaded dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <div id="completedTab" class="tab-content" style="display: none;">
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>User</th>
-                                <th>Type</th>
-                                <th>Amount</th>
-                                <th>Date</th>
-                                <th>Status</th>
-                                <th>Approved By</th>
-                            </tr>
-                        </thead>
-                        <tbody id="completedTable">
-                            <!-- Data loaded dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <div id="usersTab" class="tab-content" style="display: none;">
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Username</th>
-                                <th>Email</th>
-                                <th>Balance</th>
-                                <th>Joined</th>
-                                <th>Last Login</th>
-                            </tr>
-                        </thead>
-                        <tbody id="usersTable">
-                            <!-- Data loaded dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </main>
-    </div>
-    
-    <!-- Withdrawal Processing Modal -->
-    <div id="withdrawalModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2><i class="fas fa-wallet"></i> Process Withdrawal</h2>
-                <button id="closeWithdrawalModal" class="close-modal">&times;</button>
-            </div>
-            
-            <div id="withdrawalDetails">
-                <!-- Transaction details loaded here -->
-            </div>
-            
-            <div class="form-group">
-                <label for="transactionHash">
-                    <i class="fas fa-hashtag"></i> Transaction Hash
-                </label>
-                <input type="text" id="transactionHash" class="form-control" 
-                       placeholder="Enter blockchain transaction hash" required>
-            </div>
-            
-            <div class="form-group">
-                <label for="adminNotes">
-                    <i class="fas fa-sticky-note"></i> Admin Notes
-                </label>
-                <textarea id="adminNotes" class="form-control" rows="3" 
-                          placeholder="Add any notes for this transaction..."></textarea>
-            </div>
-            
-            <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button id="completeWithdrawalBtn" class="btn" style="flex: 1;">
-                    <i class="fas fa-check"></i> Mark as Completed
-                </button>
-                <button id="rejectWithdrawalBtn" class="btn" style="flex: 1; background: var(--danger);">
-                    <i class="fas fa-times"></i> Reject Withdrawal
-                </button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Rejection Confirmation Modal -->
-    <div id="rejectModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2><i class="fas fa-exclamation-triangle"></i> Confirm Rejection</h2>
-                <button id="closeRejectModal" class="close-modal">&times;</button>
-            </div>
-            
-            <div class="form-group">
-                <label for="rejectReason">
-                    <i class="fas fa-comment"></i> Rejection Reason
-                </label>
-                <textarea id="rejectReason" class="form-control" rows="4" 
-                          placeholder="Please provide a reason for rejecting this withdrawal..."></textarea>
-            </div>
-            
-            <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button id="confirmRejectBtn" class="btn" style="flex: 1; background: var(--danger);">
-                    <i class="fas fa-times"></i> Confirm Rejection
-                </button>
-                <button id="cancelRejectBtn" class="btn" style="flex: 1;">
-                    <i class="fas fa-arrow-left"></i> Cancel
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-    // ========== CONFIGURATION ==========
-    const API_URL = window.location.origin.includes('localhost') 
-        ? 'http://localhost:10000/api' 
-        : 'https://quantum-coin-backend.onrender.com/api';
-
-    console.log('QuantumCoin Admin Panel - API URL:', API_URL);
-
-    let adminToken = null;
-    let currentTransaction = null;
-
-    // ========== DOM ELEMENTS ==========
-    const loginView = document.getElementById('loginView');
-    const adminView = document.getElementById('adminView');
-    const loginForm = document.getElementById('loginForm');
-    const loginError = document.getElementById('loginError');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const tabs = document.querySelectorAll('.tab');
-
-    // Table bodies
-    const withdrawalsTable = document.getElementById('withdrawalsTable');
-    const depositsTable = document.getElementById('depositsTable');
-    const completedTable = document.getElementById('completedTable');
-    const usersTable = document.getElementById('usersTable');
-
-    // Stats elements
-    const totalUsers = document.getElementById('totalUsers');
-    const activeToday = document.getElementById('activeToday');
-    const totalFunding = document.getElementById('totalFunding');
-    const totalDemo = document.getElementById('totalDemo');
-    const pendingWithdrawals = document.getElementById('pendingWithdrawals');
-    const pendingWithdrawalAmount = document.getElementById('pendingWithdrawalAmount');
-    const pendingDeposits = document.getElementById('pendingDeposits');
-    const pendingDepositAmount = document.getElementById('pendingDepositAmount');
-
-    // Modal elements
-    const withdrawalModal = document.getElementById('withdrawalModal');
-    const rejectModal = document.getElementById('rejectModal');
-    const closeWithdrawalModal = document.getElementById('closeWithdrawalModal');
-    const closeRejectModal = document.getElementById('closeRejectModal');
-    const withdrawalDetails = document.getElementById('withdrawalDetails');
-    const transactionHashInput = document.getElementById('transactionHash');
-    const adminNotesInput = document.getElementById('adminNotes');
-    const rejectReasonInput = document.getElementById('rejectReason');
-    const completeWithdrawalBtn = document.getElementById('completeWithdrawalBtn');
-    const rejectWithdrawalBtn = document.getElementById('rejectWithdrawalBtn');
-    const confirmRejectBtn = document.getElementById('confirmRejectBtn');
-    const cancelRejectBtn = document.getElementById('cancelRejectBtn');
-
-    // ========== INITIALIZATION ==========
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log('Admin panel initialized');
-        
-        // Try to get token from localStorage
-        adminToken = localStorage.getItem('quantumcoin_admin_token');
-        
-        if (adminToken) {
-            verifyAdminToken();
-        } else {
-            showLoginView();
-        }
-        
-        setupEventListeners();
-        
-        // Test API connection
-        testAPIConnection();
-    });
-
-    async function testAPIConnection() {
-        try {
-            const response = await fetch(\`\${API_URL}/health\`);
-            const data = await response.json();
-            console.log('✅ API Connection Test:', data.status);
-        } catch (error) {
-            console.error('❌ API Connection Failed:', error);
-            alert('Warning: Cannot connect to API server. Some features may not work.');
-        }
-    }
-
-    function setupEventListeners() {
-        // Login form
-        loginForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            await loginAdmin();
-        });
-        
-        // Logout
-        logoutBtn.addEventListener('click', function() {
-            localStorage.removeItem('quantumcoin_admin_token');
-            adminToken = null;
-            showLoginView();
-            showToast('Logged out successfully', 'info');
-        });
-        
-        // Tabs
-        tabs.forEach(tab => {
-            tab.addEventListener('click', function() {
-                const tabName = this.dataset.tab;
-                
-                // Update active tab
-                tabs.forEach(t => t.classList.remove('active'));
-                this.classList.add('active');
-                
-                // Show corresponding content
-                document.querySelectorAll('.tab-content').forEach(content => {
-                    content.style.display = 'none';
-                });
-                document.getElementById(\`\${tabName}Tab\`).style.display = 'block';
-                
-                // Load data for this tab
-                if (tabName === 'withdrawals') {
-                    loadPendingWithdrawals();
-                } else if (tabName === 'deposits') {
-                    loadPendingDeposits();
-                } else if (tabName === 'completed') {
-                    loadCompletedTransactions();
-                } else if (tabName === 'users') {
-                    loadAllUsers();
-                }
-            });
-        });
-        
-        // Modal close buttons
-        closeWithdrawalModal.addEventListener('click', function() {
-            withdrawalModal.style.display = 'none';
-            resetModalInputs();
-        });
-        
-        closeRejectModal.addEventListener('click', function() {
-            rejectModal.style.display = 'none';
-            rejectReasonInput.value = '';
-        });
-        
-        // Complete withdrawal
-        completeWithdrawalBtn.addEventListener('click', function() {
-            completeWithdrawal();
-        });
-        
-        // Open reject modal
-        rejectWithdrawalBtn.addEventListener('click', function() {
-            rejectModal.style.display = 'flex';
-        });
-        
-        // Confirm rejection
-        confirmRejectBtn.addEventListener('click', function() {
-            rejectWithdrawal();
-        });
-        
-        // Cancel rejection
-        cancelRejectBtn.addEventListener('click', function() {
-            rejectModal.style.display = 'none';
-            rejectReasonInput.value = '';
-        });
-        
-        // Close modals on outside click
-        window.addEventListener('click', function(e) {
-            if (e.target === withdrawalModal) {
-                withdrawalModal.style.display = 'none';
-                resetModalInputs();
-            }
-            if (e.target === rejectModal) {
-                rejectModal.style.display = 'none';
-                rejectReasonInput.value = '';
-            }
-        });
-        
-        // Enter key to submit in modals
-        transactionHashInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                completeWithdrawal();
-            }
-        });
-    }
-
-    function resetModalInputs() {
-        transactionHashInput.value = '';
-        adminNotesInput.value = '';
-        rejectReasonInput.value = '';
-    }
-
-    // ========== API HELPER FUNCTIONS ==========
-    async function apiRequest(endpoint, options = {}) {
-        const url = \`\${API_URL}\${endpoint}\`;
-        console.log(\`🔗 API Request: \${options.method || 'GET'} \${url}\`);
-        
-        const headers = {
-            'Content-Type': 'application/json',
-            ...options.headers
-        };
-        
-        if (adminToken) {
-            headers['Authorization'] = \`Bearer \${adminToken}\`;
-        }
-        
-        try {
-            const response = await fetch(url, {
-                ...options,
-                headers,
-                mode: 'cors',
-                credentials: 'include'
-            });
-            
-            console.log(\`📥 Response Status: \${response.status} \${response.statusText}\`);
-            
-            if (response.status === 401) {
-                localStorage.removeItem('quantumcoin_admin_token');
-                adminToken = null;
-                showLoginView();
-                showToast('Session expired. Please login again.', 'warning');
-                return null;
-            }
-            
-            if (response.status === 403) {
-                showToast('Access denied. Admin privileges required.', 'danger');
-                return null;
-            }
-            
-            if (!response.ok && response.status !== 404) {
-                throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
-            }
-            
-            // Check if response has content
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.error || data.message || \`Request failed with status \${response.status}\`);
-                }
-                
-                return data;
-            } else {
-                // Handle non-JSON responses
-                const text = await response.text();
-                if (!response.ok) {
-                    throw new Error(text || \`Request failed with status \${response.status}\`);
-                }
-                return { success: true, message: text };
-            }
-        } catch (error) {
-            console.error('❌ API Request Failed:', error);
-            
-            // Don't show alert for network errors to avoid spam
-            if (!error.message.includes('Failed to fetch')) {
-                showError(error.message);
-            }
-            
-            return null;
-        }
-    }
-
-    // ========== AUTHENTICATION FUNCTIONS ==========
-    async function verifyAdminToken() {
-        showLoading('Verifying admin session...');
-        
-        try {
-            const result = await apiRequest('/admin/dashboard');
-            if (result) {
-                showAdminView();
-                loadDashboardStats();
-                loadPendingWithdrawals();
-                showToast('Admin session verified', 'success');
-            } else {
-                showLoginView();
-            }
-        } catch (error) {
-            console.error('❌ Token verification failed:', error);
-            showLoginView();
-        } finally {
-            hideLoading();
-        }
-    }
-
-    async function loginAdmin() {
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value.trim();
-        
-        if (!username || !password) {
-            showLoginError('Please enter both username and password');
-            return;
-        }
-        
-        loginError.style.display = 'none';
-        showLoading('Logging in...');
-        
-        try {
-            const response = await fetch(\`\${API_URL}/admin/login\`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ username, password })
-            });
-            
-            const data = await response.json();
-            
-            if (response.ok && data.success) {
-                adminToken = data.token;
-                localStorage.setItem('quantumcoin_admin_token', adminToken);
-                showAdminView();
-                loadDashboardStats();
-                loadPendingWithdrawals();
-                showToast('Login successful!', 'success');
-            } else {
-                throw new Error(data?.error || 'Invalid username or password');
-            }
-        } catch (error) {
-            showLoginError(error.message || 'Login failed. Please check credentials.');
-            console.error('❌ Login error:', error);
-        } finally {
-            hideLoading();
-        }
-    }
-
-    function showLoginError(message) {
-        loginError.textContent = message;
-        loginError.style.display = 'block';
-    }
-
-    function showLoginView() {
-        loginView.style.display = 'block';
-        adminView.style.display = 'none';
-        loginError.style.display = 'none';
-    }
-
-    function showAdminView() {
-        loginView.style.display = 'none';
-        adminView.style.display = 'block';
-    }
-
-    // ========== DASHBOARD FUNCTIONS ==========
-    async function loadDashboardStats() {
-        try {
-            const stats = await apiRequest('/admin/dashboard');
-            if (stats) {
-                totalUsers.textContent = stats.total_users || 0;
-                activeToday.textContent = stats.active_today || 0;
-                totalFunding.textContent = \`\$\{(stats.total_funding || 0).toFixed(2)}\`;
-                totalDemo.textContent = \`\$\{(stats.total_demo || 0).toFixed(2)}\`;
-                pendingWithdrawals.textContent = stats.pending_withdrawals || 0;
-                pendingWithdrawalAmount.textContent = \`\$\{(stats.pending_withdrawal_amount || 0).toFixed(2)}\`;
-                pendingDeposits.textContent = stats.pending_deposits || 0;
-                pendingDepositAmount.textContent = \`\$\{(stats.pending_deposit_amount || 0).toFixed(2)}\`;
-                
-                console.log('📊 Dashboard stats loaded');
-            }
-        } catch (error) {
-            console.error('❌ Failed to load dashboard stats:', error);
-        }
-    }
-
-    // ========== WITHDRAWAL FUNCTIONS ==========
-    async function loadPendingWithdrawals() {
-        try {
-            withdrawalsTable.innerHTML = \`
-                <tr>
-                    <td colspan="8" style="text-align: center; padding: 40px;">
-                        <div class="loading-spinner"></div>
-                        <div style="margin-top: 10px; color: var(--primary);">Loading pending withdrawals...</div>
-                    </td>
-                </tr>
-            \`;
-            
-            const withdrawals = await apiRequest('/admin/withdrawals/pending');
-            
-            if (!withdrawals || withdrawals.length === 0) {
-                withdrawalsTable.innerHTML = \`
-                    <tr>
-                        <td colspan="8" style="text-align: center; padding: 40px; color: rgba(226, 250, 252, 0.5);">
-                            <i class="fas fa-check-circle" style="font-size: 2rem; color: var(--success); margin-bottom: 10px;"></i>
-                            <div>No pending withdrawals</div>
-                            <div style="font-size: 0.9rem; margin-top: 5px;">All withdrawals have been processed</div>
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            withdrawalsTable.innerHTML = '';
-            
-            withdrawals.forEach(withdrawal => {
-                const row = document.createElement('tr');
-                const date = new Date(withdrawal.created_at).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-                
-                const walletAddress = withdrawal.wallet_address || 'N/A';
-                const walletShort = walletAddress.length > 15 
-                    ? \`\${walletAddress.substring(0, 12)}...\${walletAddress.substring(walletAddress.length - 3)}\` 
-                    : walletAddress;
-                
-                row.innerHTML = \`
-                    <td>#\${withdrawal.id}</td>
-                    <td>
-                        <strong>\${withdrawal.username}</strong><br>
-                        <small style="color: rgba(226, 250, 252, 0.6);">\${withdrawal.email || ''}</small>
-                    </td>
-                    <td><strong style="color: var(--primary);">\$\${withdrawal.amount?.toFixed(2) || '0.00'}</strong></td>
-                    <td><span class="badge" style="background: rgba(0, 240, 255, 0.1); color: var(--primary);">\${withdrawal.network || 'N/A'}</span></td>
-                    <td title="\${walletAddress}">
-                        <div style="font-family: monospace; font-size: 0.85rem;">\${walletShort}</div>
-                    </td>
-                    <td>\${date}</td>
-                    <td><span class="badge badge-pending"><i class="fas fa-clock"></i> Pending</span></td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn approve-btn" 
-                                    onclick="openWithdrawalModal(\${withdrawal.id})">
-                                <i class="fas fa-check"></i> Process
-                            </button>
-                        </div>
-                    </td>
-                \`;
-                withdrawalsTable.appendChild(row);
-            });
-            
-            console.log(\`✅ Loaded \${withdrawals.length} pending withdrawals\`);
-        } catch (error) {
-            console.error('❌ Failed to load withdrawals:', error);
-            withdrawalsTable.innerHTML = \`
-                <tr>
-                    <td colspan="8" style="text-align: center; padding: 40px; color: var(--danger);">
-                        <i class="fas fa-exclamation-triangle" style="font-size: 2rem; margin-bottom: 10px;"></i>
-                        <div>Error loading withdrawals</div>
-                        <div style="font-size: 0.9rem; margin-top: 5px;">\${error.message || 'Please try again'}</div>
-                    </td>
-                </tr>
-            \`;
-        }
-    }
-
-    async function openWithdrawalModal(id) {
-        try {
-            showLoading('Loading withdrawal details...');
-            
-            const withdrawal = await apiRequest(\`/admin/withdrawals/\${id}\`);
-            if (withdrawal) {
-                currentTransaction = withdrawal;
-                
-                const date = new Date(withdrawal.created_at).toLocaleString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-                
-                const fees = withdrawal.fees || 0;
-                const netAmount = withdrawal.amount - fees;
-                
-                withdrawalDetails.innerHTML = \`
-                    <div class="transaction-details">
-                        <div class="detail-row">
-                            <div class="detail-label">Transaction ID:</div>
-                            <div class="detail-value">#\${withdrawal.id}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">User:</div>
-                            <div class="detail-value">\${withdrawal.username} (\${withdrawal.email || 'No email'})</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Amount:</div>
-                            <div class="detail-value" style="color: var(--primary); font-weight: bold;">\$\${withdrawal.amount?.toFixed(2) || '0.00'}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Network Fee:</div>
-                            <div class="detail-value">\$\${fees.toFixed(2)}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Net Amount:</div>
-                            <div class="detail-value" style="color: var(--success);">\$\${netAmount.toFixed(2)}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Network:</div>
-                            <div class="detail-value">\${withdrawal.network || 'N/A'}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Wallet Address:</div>
-                            <div class="detail-value wallet-address">\${withdrawal.wallet_address || 'N/A'}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Date:</div>
-                            <div class="detail-value">\${date}</div>
-                        </div>
-                    </div>
-                \`;
-                
-                transactionHashInput.value = '';
-                adminNotesInput.value = '';
-                withdrawalModal.style.display = 'flex';
-                
-                console.log(\`✅ Loaded withdrawal #\${id} details\`);
-            }
-        } catch (error) {
-            console.error('❌ Failed to load withdrawal details:', error);
-            showError('Failed to load withdrawal details: ' + (error.message || 'Unknown error'));
-        } finally {
-            hideLoading();
-        }
-    }
-
-    async function completeWithdrawal() {
-        if (!currentTransaction) {
-            showError('No withdrawal selected');
-            return;
-        }
-        
-        const transactionHash = transactionHashInput.value.trim();
-        const notes = adminNotesInput.value.trim();
-        
-        if (!transactionHash) {
-            showError('Please enter the transaction hash');
-            transactionHashInput.focus();
-            return;
-        }
-        
-        if (!confirm(\`Confirm: Mark withdrawal #\${currentTransaction.id} as completed?\`)) {
-            return;
-        }
-        
-        showLoading('Completing withdrawal...');
-        
-        try {
-            const result = await apiRequest(\`/admin/withdrawals/\${currentTransaction.id}/complete\`, {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    transaction_hash: transactionHash,
-                    notes: notes || 'Withdrawal completed by admin'
-                })
-            });
-            
-            if (result && result.success) {
-                withdrawalModal.style.display = 'none';
-                resetModalInputs();
-                
-                showToast(\`✅ Withdrawal #\${currentTransaction.id} marked as completed\`, 'success');
-                
-                // Refresh data
-                loadDashboardStats();
-                loadPendingWithdrawals();
-                loadCompletedTransactions();
-                
-                console.log(\`✅ Completed withdrawal #\${currentTransaction.id}\`);
-            }
-        } catch (error) {
-            console.error('❌ Failed to complete withdrawal:', error);
-            showError('Failed to complete withdrawal: ' + (error.message || 'Unknown error'));
-        } finally {
-            hideLoading();
-        }
-    }
-
-    async function rejectWithdrawal() {
-        if (!currentTransaction) {
-            showError('No withdrawal selected');
-            return;
-        }
-        
-        const reason = rejectReasonInput.value.trim() || 'Withdrawal rejected by admin';
-        
-        if (!confirm(\`Reject withdrawal #\${currentTransaction.id} and return funds to user?\`)) {
-            return;
-        }
-        
-        showLoading('Rejecting withdrawal...');
-        
-        try {
-            const result = await apiRequest(\`/admin/withdrawals/\${currentTransaction.id}/reject\`, {
-                method: 'POST',
-                body: JSON.stringify({ notes: reason })
-            });
-            
-            if (result && result.success) {
-                withdrawalModal.style.display = 'none';
-                rejectModal.style.display = 'none';
-                resetModalInputs();
-                
-                showToast(\`❌ Withdrawal #\${currentTransaction.id} rejected\`, 'warning');
-                
-                // Refresh data
-                loadDashboardStats();
-                loadPendingWithdrawals();
-                loadCompletedTransactions();
-                
-                console.log(\`❌ Rejected withdrawal #\${currentTransaction.id}\`);
-            }
-        } catch (error) {
-            console.error('❌ Failed to reject withdrawal:', error);
-            showError('Failed to reject withdrawal: ' + (error.message || 'Unknown error'));
-        } finally {
-            hideLoading();
-        }
-    }
-
-    // ========== DEPOSIT FUNCTIONS ==========
-    async function loadPendingDeposits() {
-        try {
-            depositsTable.innerHTML = \`
-                <tr>
-                    <td colspan="6" style="text-align: center; padding: 40px;">
-                        <div class="loading-spinner"></div>
-                        <div style="margin-top: 10px; color: var(--primary);">Loading pending deposits...</div>
-                    </td>
-                </tr>
-            \`;
-            
-            const deposits = await apiRequest('/admin/transactions/pending');
-            
-            if (!deposits || deposits.length === 0) {
-                depositsTable.innerHTML = \`
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 40px; color: rgba(226, 250, 252, 0.5);">
-                            <i class="fas fa-check-circle" style="font-size: 2rem; color: var(--success); margin-bottom: 10px;"></i>
-                            <div>No pending deposits</div>
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            depositsTable.innerHTML = '';
-            
-            // Filter for deposit transactions only
-            const depositTransactions = deposits.filter(t => t.type === 'deposit');
-            
-            if (depositTransactions.length === 0) {
-                depositsTable.innerHTML = \`
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 40px; color: rgba(226, 250, 252, 0.5);">
-                            No pending deposits
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            depositTransactions.forEach(deposit => {
-                const row = document.createElement('tr');
-                const date = new Date(deposit.created_at).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric'
-                });
-                
-                const bonus = deposit.amount >= 1000 ? deposit.amount * 0.05 : 0;
-                
-                row.innerHTML = \`
-                    <td>#\${deposit.id}</td>
-                    <td>
-                        <strong>\${deposit.username}</strong><br>
-                        <small style="color: rgba(226, 250, 252, 0.6);">\${deposit.email || ''}</small>
-                    </td>
-                    <td>
-                        <strong style="color: var(--primary);">\$\${deposit.amount?.toFixed(2) || '0.00'}</strong>
-                        \${bonus > 0 ? \`<br><small style="color: var(--success);">+ \$\${bonus.toFixed(2)} bonus</small>\` : ''}
-                    </td>
-                    <td>\${date}</td>
-                    <td><span class="badge badge-pending"><i class="fas fa-clock"></i> Pending</span></td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn approve-btn" 
-                                    onclick="approveDeposit(\${deposit.id})">
-                                <i class="fas fa-check"></i> Approve
-                            </button>
-                            <button class="action-btn reject-btn" 
-                                    onclick="rejectDeposit(\${deposit.id})">
-                                <i class="fas fa-times"></i> Reject
-                            </button>
-                        </div>
-                    </td>
-                \`;
-                depositsTable.appendChild(row);
-            });
-            
-            console.log(\`✅ Loaded \${depositTransactions.length} pending deposits\`);
-        } catch (error) {
-            console.error('❌ Failed to load deposits:', error);
-            depositsTable.innerHTML = \`
-                <tr>
-                    <td colspan="6" style="text-align: center; padding: 40px; color: var(--danger);">
-                        <i class="fas fa-exclamation-triangle"></i> Error loading deposits
-                    </td>
-                </tr>
-            \`;
-        }
-    }
-
-    async function approveDeposit(id) {
-        if (!confirm('Approve this deposit and credit funds to user?')) {
-            return;
-        }
-        
-        showLoading('Approving deposit...');
-        
-        try {
-            const result = await apiRequest(\`/admin/transactions/\${id}/approve\`, {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    notes: 'Deposit approved by admin',
-                    action: 'approve'
-                })
-            });
-            
-            if (result && result.success) {
-                showToast(\`✅ Deposit #\${id} approved\`, 'success');
-                
-                // Refresh data
-                loadDashboardStats();
-                loadPendingDeposits();
-                loadCompletedTransactions();
-                
-                console.log(\`✅ Approved deposit #\${id}\`);
-            }
-        } catch (error) {
-            console.error('❌ Failed to approve deposit:', error);
-            showError('Failed to approve deposit: ' + (error.message || 'Unknown error'));
-        } finally {
-            hideLoading();
-        }
-    }
-
-    async function rejectDeposit(id) {
-        const reason = prompt('Enter rejection reason (optional):', 'Deposit rejected by admin');
-        
-        if (reason === null) {
-            return; // User cancelled
-        }
-        
-        if (!confirm('Reject this deposit?')) {
-            return;
-        }
-        
-        showLoading('Rejecting deposit...');
-        
-        try {
-            const result = await apiRequest(\`/admin/transactions/\${id}/reject\`, {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    notes: reason || 'Deposit rejected by admin',
-                    action: 'reject'
-                })
-            });
-            
-            if (result && result.success) {
-                showToast(\`❌ Deposit #\${id} rejected\`, 'warning');
-                
-                // Refresh data
-                loadDashboardStats();
-                loadPendingDeposits();
-                loadCompletedTransactions();
-                
-                console.log(\`❌ Rejected deposit #\${id}\`);
-            }
-        } catch (error) {
-            console.error('❌ Failed to reject deposit:', error);
-            showError('Failed to reject deposit: ' + (error.message || 'Unknown error'));
-        } finally {
-            hideLoading();
-        }
-    }
-
-    // ========== TRANSACTION FUNCTIONS ==========
-    async function loadCompletedTransactions() {
-        try {
-            completedTable.innerHTML = \`
-                <tr>
-                    <td colspan="7" style="text-align: center; padding: 40px;">
-                        <div class="loading-spinner"></div>
-                        <div style="margin-top: 10px; color: var(--primary);">Loading transactions...</div>
-                    </td>
-                </tr>
-            \`;
-            
-            const transactions = await apiRequest('/admin/transactions');
-            
-            if (!transactions || transactions.length === 0) {
-                completedTable.innerHTML = \`
-                    <tr>
-                        <td colspan="7" style="text-align: center; padding: 40px; color: rgba(226, 250, 252, 0.5);">
-                            No completed transactions
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            completedTable.innerHTML = '';
-            
-            transactions.forEach(transaction => {
-                const row = document.createElement('tr');
-                const date = new Date(transaction.created_at).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric'
-                });
-                
-                const typeText = transaction.type === 'deposit' ? 'Deposit' : 
-                               transaction.type === 'withdrawal' ? 'Withdrawal' : 
-                               transaction.type === 'buy' ? 'Buy Trade' : 
-                               transaction.type === 'sell' ? 'Sell Trade' : transaction.type;
-                
-                const statusClass = transaction.status === 'completed' ? 'badge-approved' : 
-                                  transaction.status === 'rejected' ? 'badge-rejected' : 'badge-warning';
-                
-                const statusText = transaction.status === 'completed' ? 'Completed' : 
-                                 transaction.status === 'rejected' ? 'Rejected' : 
-                                 transaction.status === 'pending' ? 'Pending' : transaction.status;
-                
-                row.innerHTML = \`
-                    <td>#\${transaction.id}</td>
-                    <td>
-                        <strong>\${transaction.username}</strong><br>
-                        <small style="color: rgba(226, 250, 252, 0.6);">\${transaction.email || ''}</small>
-                    </td>
-                    <td>\${typeText}</td>
-                    <td>
-                        <strong style="color: \${transaction.type === 'deposit' ? 'var(--success)' : 'var(--primary)'};">\$\${transaction.amount?.toFixed(2) || '0.00'}</strong>
-                        \${transaction.bonus > 0 ? \`<br><small style="color: var(--success);">+ \$\${transaction.bonus.toFixed(2)} bonus</small>\` : ''}
-                    </td>
-                    <td>\${date}</td>
-                    <td><span class="badge \${statusClass}">\${statusText}</span></td>
-                    <td>\${transaction.admin_username || 'System'}</td>
-                \`;
-                completedTable.appendChild(row);
-            });
-            
-            console.log(\`✅ Loaded \${transactions.length} completed transactions\`);
-        } catch (error) {
-            console.error('❌ Failed to load completed transactions:', error);
-            completedTable.innerHTML = \`
-                <tr>
-                    <td colspan="7" style="text-align: center; padding: 40px; color: var(--danger);">
-                        <i class="fas fa-exclamation-triangle"></i> Error loading transactions
-                    </td>
-                </tr>
-            \`;
-        }
-    }
-
-    // ========== USER FUNCTIONS ==========
-    async function loadAllUsers() {
-        try {
-            usersTable.innerHTML = \`
-                <tr>
-                    <td colspan="6" style="text-align: center; padding: 40px;">
-                        <div class="loading-spinner"></div>
-                        <div style="margin-top: 10px; color: var(--primary);">Loading users...</div>
-                    </td>
-                </tr>
-            \`;
-            
-            const users = await apiRequest('/admin/users');
-            
-            if (!users || users.length === 0) {
-                usersTable.innerHTML = \`
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 40px; color: rgba(226, 250, 252, 0.5);">
-                            No users found
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            usersTable.innerHTML = '';
-            
-            users.forEach(user => {
-                const row = document.createElement('tr');
-                const joinDate = new Date(user.created_at).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric'
-                });
-                
-                const lastLogin = user.last_login 
-                    ? new Date(user.last_login).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })
-                    : 'Never';
-                
-                const totalBalance = (user.funding_balance || 0) + (user.demo_balance || 0);
-                
-                row.innerHTML = \`
-                    <td>#\${user.id}</td>
-                    <td>
-                        <strong>\${user.username}</strong><br>
-                        <small style="color: rgba(226, 250, 252, 0.6);">\${user.email || 'No email'}</small>
-                    </td>
-                    <td>\${user.email || 'N/A'}</td>
-                    <td>
-                        <div style="margin-bottom: 4px;">
-                            <span style="color: var(--primary); font-weight: bold;">\$\${(user.funding_balance || 0).toFixed(2)}</span> funding
-                        </div>
-                        <div>
-                            <span style="color: rgba(226, 250, 252, 0.7);">\$\${(user.demo_balance || 0).toFixed(2)}</span> demo
-                        </div>
-                        <div style="margin-top: 4px; border-top: 1px solid rgba(226, 250, 252, 0.1); padding-top: 4px;">
-                            <strong>Total: \$\${totalBalance.toFixed(2)}</strong>
-                        </div>
-                    </td>
-                    <td>\${joinDate}</td>
-                    <td>
-                        \${lastLogin === 'Never' 
-                            ? '<span style="color: rgba(226, 250, 252, 0.5);">Never</span>' 
-                            : \`<div>\${lastLogin}</div>\`
-                        }
-                    </td>
-                \`;
-                usersTable.appendChild(row);
-            });
-            
-            console.log(\`✅ Loaded \${users.length} users\`);
-        } catch (error) {
-            console.error('❌ Failed to load users:', error);
-            usersTable.innerHTML = \`
-                <tr>
-                    <td colspan="6" style="text-align: center; padding: 40px; color: var(--danger);">
-                        <i class="fas fa-exclamation-triangle"></i> Error loading users
-                    </td>
-                </tr>
-            \`;
-        }
-    }
-
-    // ========== UI HELPER FUNCTIONS ==========
-    function showLoading(message = 'Loading...') {
-        // Create or update loading overlay
-        let loadingOverlay = document.getElementById('loadingOverlay');
-        if (!loadingOverlay) {
-            loadingOverlay = document.createElement('div');
-            loadingOverlay.id = 'loadingOverlay';
-            loadingOverlay.style.cssText = \`
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(5, 5, 16, 0.9);
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                z-index: 9999;
-                backdrop-filter: blur(5px);
-            \`;
-            
-            const spinner = document.createElement('div');
-            spinner.className = 'loading-spinner';
-            spinner.style.cssText = 'width: 60px; height: 60px; border-width: 4px;';
-            
-            const text = document.createElement('div');
-            text.id = 'loadingText';
-            text.style.cssText = \`
-                margin-top: 20px;
-                color: var(--primary);
-                font-size: 1.1rem;
-                font-weight: 500;
-            \`;
-            text.textContent = message;
-            
-            loadingOverlay.appendChild(spinner);
-            loadingOverlay.appendChild(text);
-            document.body.appendChild(loadingOverlay);
-        } else {
-            document.getElementById('loadingText').textContent = message;
-            loadingOverlay.style.display = 'flex';
-        }
-    }
-
-    function hideLoading() {
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        if (loadingOverlay) {
-            loadingOverlay.style.display = 'none';
-        }
-    }
-
-    function showToast(message, type = 'info') {
-        // Remove existing toasts
-        const existingToasts = document.querySelectorAll('.toast');
-        existingToasts.forEach(toast => toast.remove());
-        
-        const toast = document.createElement('div');
-        toast.className = \`toast toast-\${type}\`;
-        toast.style.cssText = \`
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 20px;
-            border-radius: 10px;
-            background: \${type === 'success' ? 'rgba(0, 255, 136, 0.15)' : 
-                        type === 'danger' ? 'rgba(255, 0, 110, 0.15)' : 
-                        type === 'warning' ? 'rgba(255, 204, 0, 0.15)' : 
-                        'rgba(0, 240, 255, 0.15)'};
-            border: 1px solid \${type === 'success' ? 'rgba(0, 255, 136, 0.3)' : 
-                        type === 'danger' ? 'rgba(255, 0, 110, 0.3)' : 
-                        type === 'warning' ? 'rgba(255, 204, 0, 0.3)' : 
-                        'rgba(0, 240, 255, 0.3)'};
-            color: \${type === 'success' ? 'var(--success)' : 
-                    type === 'danger' ? 'var(--danger)' : 
-                    type === 'warning' ? 'var(--warning)' : 
-                    'var(--primary)'};
-            z-index: 10000;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            backdrop-filter: blur(10px);
-            transform: translateX(150%);
-            transition: transform 0.3s ease;
-            max-width: 400px;
-            word-break: break-word;
-        \`;
-        
-        const icon = type === 'success' ? '✓' :
-                     type === 'danger' ? '✗' :
-                     type === 'warning' ? '⚠' : 'ℹ';
-        
-        toast.innerHTML = \`
-            <span style="font-size: 1.2rem; font-weight: bold;">\${icon}</span>
-            <span>\${message}</span>
-        \`;
-        
-        document.body.appendChild(toast);
-        
-        // Animate in
-        setTimeout(() => {
-            toast.style.transform = 'translateX(0)';
-        }, 10);
-        
-        // Auto remove after 5 seconds
-        setTimeout(() => {
-            toast.style.transform = 'translateX(150%)';
-            setTimeout(() => {
-                if (toast.parentNode) {
-                    toast.parentNode.removeChild(toast);
-                }
-            }, 300);
-        }, 5000);
-    }
-
-    function showError(message) {
-        showToast(message, 'danger');
-    }
-
-    // ========== GLOBAL FUNCTION EXPORTS ==========
-    // Make functions available globally for onclick handlers
-    window.openWithdrawalModal = openWithdrawalModal;
-    window.approveDeposit = approveDeposit;
-    window.rejectDeposit = rejectDeposit;
-    </script>
-</body>
-</html>
-  `);
-});
-
 // ========== WEB SOCKET ==========
 app.set('socketio', io);
 
@@ -2791,9 +1226,39 @@ io.on('connection', (socket) => {
     console.log('Admin joined admin room');
   });
   
-  socket.on('subscribe', (data) => {
-    if (data.userId) {
-      socket.join(`user_${data.userId}`);
+  // Chat message handler
+  socket.on('chat_message', async (data) => {
+    try {
+      // Save to database
+      const result = await dbQuery.run(
+        'INSERT INTO chat_messages (user_id, username, message) VALUES (?, ?, ?)',
+        [data.userId, data.username, data.message]
+      );
+      
+      // Broadcast to all clients
+      io.emit('receive_message', {
+        id: result.id,
+        userId: data.userId,
+        username: data.username,
+        message: data.message,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Chat error:', error);
+    }
+  });
+  
+  socket.on('get_chat_history', async () => {
+    try {
+      const messages = await dbQuery.all(
+        `SELECT * FROM chat_messages 
+         ORDER BY timestamp DESC 
+         LIMIT 50`
+      );
+      
+      socket.emit('chat_history', messages.reverse());
+    } catch (error) {
+      console.error('Chat history error:', error);
     }
   });
   
@@ -2810,9 +1275,6 @@ app.use('/api/*', (req, res) => {
       health: 'GET /api/health',
       auth: {
         login: 'POST /api/auth/login',
-        google_login: 'POST /api/auth/google',
-        register: 'POST /api/auth/register',
-        logout: 'POST /api/auth/logout',
         admin_login: 'POST /api/admin/login'
       },
       admin: {
@@ -2857,14 +1319,8 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log(`🚀 QuantumCoin API with Admin Panel running on port ${PORT}`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
-  console.log(`🌐 Admin Panel available at: http://localhost:${PORT}/admin`);
-  console.log(`✅ Google OAuth enabled with Client ID: ${GOOGLE_CLIENT_ID}`);
   console.log(`👑 Admin login: admin / admin123`);
   console.log(`👤 User login: testuser / password123`);
-  console.log(`🔐 Available authentication methods:`);
-  console.log(`   • Email/Password login`);
-  console.log(`   • Google OAuth login`);
-  console.log(`   • User registration`);
   console.log(`💸 Admin Panel Features:`);
   console.log(`   • Complete withdrawal management`);
   console.log(`   • Deposit approval system`);
@@ -2872,6 +1328,7 @@ server.listen(PORT, () => {
   console.log(`   • Real-time notifications`);
   console.log(`   • Dashboard statistics`);
 });
+
 
 // Export the server for use in other files if needed
 module.exports = { app, server };
