@@ -1,3 +1,4 @@
+
 // ========== SERVER CODE (Backend) ==========
 const express = require('express');
 const http = require('http');
@@ -5,7 +6,9 @@ const socketIo = require('socket.io');
 const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const { OAuth2Client } = require('google-auth-library');
 const app = express();
+const axios = require('axios');
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
@@ -39,6 +42,71 @@ app.use(express.json({ limit: '10mb' }));
 // ========== DATABASE SETUP ==========
 const db = new sqlite3.Database(':memory:');
 
+function initDatabase() {
+    initializeSampleData();
+  db.serialize(() => {
+    // Users table
+db.run(`CREATE TABLE IF NOT EXISTS trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  amount REAL NOT NULL,
+  price REAL NOT NULL,
+  total REAL NOT NULL,
+  fee REAL DEFAULT 0,
+  account_type TEXT NOT NULL,
+  prediction TEXT,
+  profit_loss REAL,
+  status TEXT DEFAULT 'completed',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users (id)
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS portfolio (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  coin_symbol TEXT NOT NULL,
+  amount REAL NOT NULL,
+  purchase_price REAL NOT NULL,
+  account_type TEXT NOT NULL,
+  current_value REAL,
+  profit_loss REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, coin_symbol, account_type),
+  FOREIGN KEY (user_id) REFERENCES users (id)
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS price_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  price REAL NOT NULL,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  username TEXT NOT NULL,
+  message TEXT NOT NULL,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+      
+    // Insert default admin if not exists
+    const adminPassword = bcrypt.hashSync('admin123', 10);
+    db.run(`INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
+      ['admin', adminPassword]);
+
+    // Insert default user if not exists
+    const userPassword = bcrypt.hashSync('password123', 10);
+    db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
+      ['testuser', 'test@quantumcoin.com', userPassword, 5000.00, 100000.00]);
+    
+    console.log('✅ Database initialized with complete features');
+  });
+}
+
 // Database helper functions
 const dbQuery = {
   get: (sql, params = []) => {
@@ -68,6 +136,9 @@ const dbQuery = {
     });
   }
 };
+
+const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // Simple session storage
 const sessions = new Map();
@@ -134,48 +205,26 @@ let cryptoData = {
     volume: 1200000000, 
     color: '#c2a633',
     volatility: 0.05 
-  },
-  SOL: {
-    name: 'Solana',
-    price: 95.42,
-    change: 1.25,
-    volume: 2500000000,
-    color: '#00ffa3',
-    volatility: 0.04
-  },
-  ADA: {
-    name: 'Cardano',
-    price: 0.52,
-    change: -0.75,
-    volume: 350000000,
-    color: '#0033ad',
-    volatility: 0.03
-  },
-  XRP: {
-    name: 'Ripple',
-    price: 0.62,
-    change: 0.85,
-    volume: 1200000000,
-    color: '#23292f',
-    volatility: 0.02
-  },
-  BNB: {
-    name: 'Binance Coin',
-    price: 305.67,
-    change: 1.45,
-    volume: 1500000000,
-    color: '#f0b90b',
-    volatility: 0.03
-  },
-  SHIB: {
-    name: 'Shiba Inu',
-    price: 0.0000085,
-    change: 2.15,
-    volume: 450000000,
-    color: '#f00500',
-    volatility: 0.06
   }
 };
+
+// Simulate market updates
+function updateMarketPrices() {
+  for (const coin in cryptoData) {
+    const volatility = cryptoData[coin].volatility || 0.02;
+    const changePercent = (Math.random() * volatility * 2) - volatility;
+    
+    cryptoData[coin].price = cryptoData[coin].price * (1 + changePercent);
+    cryptoData[coin].change = parseFloat((changePercent * 100).toFixed(2));
+    cryptoData[coin].volume = cryptoData[coin].volume * (1 + Math.random() * 0.1 - 0.05);
+  }
+  
+  // Broadcast update to all connected clients
+  io.emit('market_update', cryptoData);
+}
+
+// Update prices every 3 seconds
+setInterval(updateMarketPrices, 3000);
 
 // ========== HELPER FUNCTIONS ==========
 async function createNotification(userId, type, title, message, data = {}) {
@@ -201,266 +250,95 @@ async function createNotification(userId, type, title, message, data = {}) {
   }
 }
 
-// Update market prices and save to database
-async function updateMarketPrices() {
-  for (const coin in cryptoData) {
-    const volatility = cryptoData[coin].volatility || 0.02;
-    const changePercent = (Math.random() * volatility * 2) - volatility;
-    
-    cryptoData[coin].price = cryptoData[coin].price * (1 + changePercent);
-    cryptoData[coin].change = parseFloat((changePercent * 100).toFixed(2));
-    cryptoData[coin].volume = cryptoData[coin].volume * (1 + Math.random() * 0.1 - 0.05);
-    
-    // Save to database
-    try {
-      await dbQuery.run(
-        'INSERT INTO price_history (symbol, price) VALUES (?, ?)',
-        [coin, cryptoData[coin].price]
-      );
-    } catch (error) {
-      console.error('Failed to save price history:', error);
-    }
-  }
-  
-  // Broadcast update to all connected clients
-  io.emit('market_update', cryptoData);
-}
+// ========== API ROUTES ==========
+// Add at the top of server.js with other imports
+const { OAuth2Client } = require('google-auth-library');
 
-// Initialize sample data
-async function initializeSampleData() {
+// Add Google OAuth client configuration (use your actual Google Client ID)
+const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+// Add Google OAuth endpoint (place this with other auth routes)
+app.post('/api/auth/google', async (req, res) => {
   try {
-    console.log('📊 Initializing sample data...');
+    const { credential } = req.body;
     
-    // Add some initial chat messages
-    await dbQuery.run(
-      `INSERT INTO chat_messages (user_id, username, message, timestamp) VALUES
-       (0, 'System', 'Welcome to QuantumCoin Trading Platform!', datetime('now', '-2 hours')),
-       (0, 'Trader_Pro', 'Market looks bullish today! Great time to buy BTC', datetime('now', '-1 hour')),
-       (0, 'Crypto_Queen', 'Just made 15% profit on ETH trades!', datetime('now', '-30 minutes'))`
-    );
-    console.log('✅ Chat messages added');
-    
-    // Add initial price history
-    const coins = Object.keys(cryptoData);
-    for (const coin of coins) {
-      const basePrice = cryptoData[coin].price;
-      
-      // Add 24 hours of price history
-      for (let i = 24; i >= 0; i--) {
-        const randomChange = (Math.random() - 0.5) * cryptoData[coin].volatility;
-        const price = basePrice * (1 + randomChange);
-        await dbQuery.run(
-          'INSERT INTO price_history (symbol, price, timestamp) VALUES (?, ?, datetime("now", ?))',
-          [coin, price, `-${i} hours`]
-        );
-      }
+    if (!credential) {
+      return res.status(400).json({ error: 'No credential provided' });
     }
-    console.log('✅ Price history initialized');
     
-    // Create some sample trades for test user
-    const testUser = await dbQuery.get('SELECT * FROM users WHERE username = ?', ['testuser']);
-    if (testUser) {
-      // Sample trades
-      const sampleTrades = [
-        ['buy', 'BTC', 0.01, 41000, 410, 'funding'],
-        ['buy', 'ETH', 0.1, 2200, 220, 'funding'],
-        ['sell', 'BTC', 0.005, 41500, 207.5, 'funding'],
-        ['buy', 'DOGE', 500, 0.085, 42.5, 'demo'],
-        ['buy', 'SOL', 2, 92, 184, 'demo']
-      ];
-      
-      for (const trade of sampleTrades) {
-        await dbQuery.run(
-          `INSERT INTO trades (user_id, type, symbol, amount, price, total, account_type, status) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'completed')`,
-          [testUser.id, ...trade]
-        );
-      }
-      console.log('✅ Sample trades created');
-      
-      // Sample portfolio
-      await dbQuery.run(
-        `INSERT INTO portfolio (user_id, coin_symbol, amount, purchase_price, account_type) VALUES
-         (?, 'BTC', 0.005, 41000, 'funding'),
-         (?, 'ETH', 0.1, 2200, 'funding'),
-         (?, 'DOGE', 500, 0.085, 'demo'),
-         (?, 'SOL', 2, 92, 'demo')`,
-        [testUser.id, testUser.id, testUser.id, testUser.id]
+    // Verify Google token
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID
+    });
+    
+    const payload = ticket.getPayload();
+    
+    // Extract user info from Google payload
+    const googleId = payload.sub;
+    const email = payload.email;
+    const username = payload.name || email.split('@')[0];
+    const name = payload.name;
+    const picture = payload.picture;
+    
+    // Check if user already exists
+    let user = await dbQuery.get('SELECT * FROM users WHERE email = ?', [email]);
+    
+    if (!user) {
+      // Create new user with Google info
+      const result = await dbQuery.run(
+        `INSERT INTO users (username, email, password, funding_balance, demo_balance) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [username, email, `google_${googleId}`, 5000.00, 100000.00]
       );
-      console.log('✅ Sample portfolio created');
+      
+      user = {
+        id: result.id,
+        username: username,
+        email: email,
+        funding_balance: 5000.00,
+        demo_balance: 100000.00,
+        name: name,
+        picture: picture
+      };
     }
     
-    console.log('✅ Sample data initialization complete');
-  } catch (error) {
-    console.error('❌ Failed to initialize sample data:', error);
-  }
-}
-
-// ========== DATABASE INITIALIZATION ==========
-async function initDatabase() {
-  return new Promise((resolve, reject) => {
-    db.serialize(async () => {
-      try {
-        console.log('🗄️  Initializing database...');
-        
-        // Users table
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE NOT NULL,
-          email TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          funding_balance REAL DEFAULT 5000.00,
-          demo_balance REAL DEFAULT 100000.00,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          last_login DATETIME,
-          is_active BOOLEAN DEFAULT 1
-        )`, async (err) => {
-          if (err) reject(err);
-          
-          console.log('✅ Users table created');
-          
-          // Insert default user if not exists
-          const userPassword = bcrypt.hashSync('password123', 10);
-          await dbQuery.run(
-            `INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-            ['testuser', 'test@quantumcoin.com', userPassword, 5000.00, 100000.00]
-          );
-          console.log('✅ Default user created');
-        });
-
-        // Transactions table
-        db.run(`CREATE TABLE IF NOT EXISTS transactions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER NOT NULL,
-          username TEXT NOT NULL,
-          type TEXT NOT NULL,
-          amount REAL NOT NULL,
-          currency TEXT DEFAULT 'USD',
-          status TEXT DEFAULT 'pending',
-          network TEXT,
-          wallet_address TEXT,
-          transaction_hash TEXT,
-          fees REAL DEFAULT 0,
-          bonus REAL DEFAULT 0,
-          admin_approved BOOLEAN DEFAULT 0,
-          admin_id INTEGER,
-          admin_notes TEXT,
-          user_notes TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          completed_at DATETIME,
-          FOREIGN KEY (user_id) REFERENCES users (id)
-        )`, (err) => {
-          if (err) reject(err);
-          console.log('✅ Transactions table created');
-        });
-
-        // User notifications table
-        db.run(`CREATE TABLE IF NOT EXISTS user_notifications (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER NOT NULL,
-          type TEXT NOT NULL,
-          title TEXT NOT NULL,
-          message TEXT NOT NULL,
-          data TEXT,
-          is_read BOOLEAN DEFAULT 0,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users (id)
-        )`, (err) => {
-          if (err) reject(err);
-          console.log('✅ Notifications table created');
-        });
-
-        // Admin users table
-        db.run(`CREATE TABLE IF NOT EXISTS admins (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`, async (err) => {
-          if (err) reject(err);
-          console.log('✅ Admins table created');
-          
-          // Insert default admin if not exists
-          const adminPassword = bcrypt.hashSync('admin123', 10);
-          await dbQuery.run(
-            `INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
-            ['admin', adminPassword]
-          );
-          console.log('✅ Default admin created');
-        });
-
-        // Trades table
-        db.run(`CREATE TABLE IF NOT EXISTS trades (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER NOT NULL,
-          type TEXT NOT NULL,
-          symbol TEXT NOT NULL,
-          amount REAL NOT NULL,
-          price REAL NOT NULL,
-          total REAL NOT NULL,
-          fee REAL DEFAULT 0,
-          account_type TEXT NOT NULL,
-          prediction TEXT,
-          profit_loss REAL,
-          status TEXT DEFAULT 'completed',
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users (id)
-        )`, (err) => {
-          if (err) reject(err);
-          console.log('✅ Trades table created');
-        });
-
-        // Portfolio table
-        db.run(`CREATE TABLE IF NOT EXISTS portfolio (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER NOT NULL,
-          coin_symbol TEXT NOT NULL,
-          amount REAL NOT NULL,
-          purchase_price REAL NOT NULL,
-          account_type TEXT NOT NULL,
-          current_value REAL,
-          profit_loss REAL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(user_id, coin_symbol, account_type),
-          FOREIGN KEY (user_id) REFERENCES users (id)
-        )`, (err) => {
-          if (err) reject(err);
-          console.log('✅ Portfolio table created');
-        });
-
-        // Price history table
-        db.run(`CREATE TABLE IF NOT EXISTS price_history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          symbol TEXT NOT NULL,
-          price REAL NOT NULL,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`, (err) => {
-          if (err) reject(err);
-          console.log('✅ Price history table created');
-        });
-
-        // Chat messages table
-        db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER,
-          username TEXT NOT NULL,
-          message TEXT NOT NULL,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`, (err) => {
-          if (err) reject(err);
-          console.log('✅ Chat messages table created');
-          resolve();
-        });
-        
-      } catch (error) {
-        reject(error);
+    // Create session token
+    const token = `google_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    sessions.set(token, { 
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        funding_balance: user.funding_balance,
+        demo_balance: user.demo_balance,
+        name: name,
+        picture: picture,
+        isAdmin: false
+      },
+      createdAt: Date.now()
+    });
+    
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        funding_balance: user.funding_balance,
+        demo_balance: user.demo_balance,
+        name: name,
+        picture: picture
       }
     });
-  });
-}
+    
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+});
 
-// ========== API ROUTES ==========
 
 // Health Check
 app.get('/api/health', (req, res) => {
@@ -487,6 +365,78 @@ app.get('/api', (req, res) => {
     }
   });
 });
+
+// Add registration endpoint (place with other auth routes)
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    
+    // Validate email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    
+    // Check if username or email already exists
+    const existingUser = await dbQuery.get(
+      'SELECT * FROM users WHERE username = ? OR email = ?',
+      [username, email]
+    );
+    
+    if (existingUser) {
+      if (existingUser.username === username) {
+        return res.status(400).json({ error: 'Username already taken' });
+      }
+      if (existingUser.email === email) {
+        return res.status(400).json({ error: 'Email already registered' });
+      }
+    }
+    
+    // Hash password
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    
+    // Create user
+    const result = await dbQuery.run(
+      `INSERT INTO users (username, email, password, funding_balance, demo_balance) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [username, email, hashedPassword, 0.00, 100000.00]
+    );
+    
+    // Create session token
+    const token = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    sessions.set(token, { 
+      user: {
+        id: result.id,
+        username: username,
+        email: email,
+        funding_balance: 0.00,
+        demo_balance: 100000.00,
+        isAdmin: false
+      },
+      createdAt: Date.now()
+    });
+    
+    res.json({
+      token,
+      user: {
+        id: result.id,
+        username: username,
+        email: email,
+        funding_balance: 0.00,
+        demo_balance: 100000.00
+      }
+    });
+    
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
 
 // ========== AUTH ROUTES ==========
 app.post('/api/auth/login', async (req, res) => {
@@ -574,7 +524,7 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// Logout endpoint
+// POST /api/auth/logout - Logout user
 app.post('/api/auth/logout', authenticateToken, (req, res) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -590,435 +540,71 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
   }
 });
 
-// ========== MARKET DATA ENDPOINTS ==========
-
-// GET /api/market/data - Real market data
-app.get('/api/market/data', authenticateToken, async (req, res) => {
-  try {
-    // Get latest prices from database if available
-    const priceHistory = await dbQuery.all(
-      `SELECT ph.* FROM price_history ph 
-       INNER JOIN (
-         SELECT symbol, MAX(timestamp) as max_time 
-         FROM price_history 
-         GROUP BY symbol
-       ) latest ON ph.symbol = latest.symbol AND ph.timestamp = latest.max_time`
-    );
+// Update market prices and save to database
+async function updateMarketPrices() {
+  for (const coin in cryptoData) {
+    const volatility = cryptoData[coin].volatility || 0.02;
+    const changePercent = (Math.random() * volatility * 2) - volatility;
     
-    // If no history in DB, use simulated data
-    if (priceHistory.length === 0) {
-      return res.json(cryptoData);
-    }
+    cryptoData[coin].price = cryptoData[coin].price * (1 + changePercent);
+    cryptoData[coin].change = parseFloat((changePercent * 100).toFixed(2));
+    cryptoData[coin].volume = cryptoData[coin].volume * (1 + Math.random() * 0.1 - 0.05);
     
-    // Combine with cryptoData for full info
-    const result = {};
-    priceHistory.forEach(ph => {
-      const coinInfo = cryptoData[ph.symbol] || {
-        name: ph.symbol,
-        change: 0,
-        volume: 1000000,
-        color: '#00f0ff',
-        volatility: 0.02
-      };
-      
-      result[ph.symbol] = {
-        ...coinInfo,
-        price: ph.price
-      };
-    });
-    
-    res.json(result);
-  } catch (error) {
-    console.error('Market data error:', error);
-    res.status(500).json({ error: 'Failed to fetch market data' });
-  }
-});
-
-// GET /api/market/chart/:coin/:timeframe - Real chart data
-app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res) => {
-  try {
-    const { coin, timeframe } = req.params;
-    
-    let hoursBack = 24;
-    switch(timeframe) {
-      case '1h': hoursBack = 1; break;
-      case '1d': hoursBack = 24; break;
-      case '1w': hoursBack = 168; break;
-      case '1m': hoursBack = 720; break;
-      case '1y': hoursBack = 8760; break;
-      default: hoursBack = 24;
-    }
-    
-    const chartData = await dbQuery.all(
-      `SELECT 
-         timestamp as time,
-         MIN(price) as low,
-         MAX(price) as high,
-         SUBSTR(GROUP_CONCAT(price), 1, INSTR(GROUP_CONCAT(price), ',')-1) as open,
-         SUBSTR(GROUP_CONCAT(price), LENGTH(GROUP_CONCAT(price)) - INSTR(REVERSE(GROUP_CONCAT(price)), ',') + 2) as close
-       FROM price_history 
-       WHERE symbol = ? 
-         AND timestamp >= datetime('now', ?)
-       GROUP BY strftime('%Y-%m-%d %H', timestamp)
-       ORDER BY timestamp ASC`,
-      [coin, `-${hoursBack} hours`]
-    );
-    
-    // If no data in DB, generate fake data
-    if (chartData.length === 0) {
-      const coinData = cryptoData[coin];
-      if (!coinData) {
-        return res.status(404).json({ error: 'Coin not found' });
-      }
-      
-      const fakeData = [];
-      const now = Date.now();
-      let interval = 0;
-      
-      switch(timeframe) {
-        case '1h': interval = 60000; break;
-        case '1d': interval = 3600000; break;
-        case '1w': interval = 86400000; break;
-        case '1m': interval = 86400000; break;
-        case '1y': interval = 2592000000; break;
-        default: interval = 60000;
-      }
-      
-      let currentPrice = coinData.price;
-      for (let i = 100; i >= 0; i--) {
-        const time = new Date(now - (i * interval));
-        const change = (Math.random() - 0.5) * coinData.volatility;
-        const open = currentPrice * (1 + change);
-        const close = open * (1 + (Math.random() - 0.5) * 0.01);
-        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-        
-        fakeData.push({
-          time: time.toISOString(),
-          open: parseFloat(open.toFixed(2)),
-          high: parseFloat(high.toFixed(2)),
-          low: parseFloat(low.toFixed(2)),
-          close: parseFloat(close.toFixed(2))
-        });
-        
-        currentPrice = close;
-      }
-      return res.json(fakeData);
-    }
-    
-    res.json(chartData);
-  } catch (error) {
-    console.error('Chart data error:', error);
-    res.status(500).json({ error: 'Failed to fetch chart data' });
-  }
-});
-
-// ========== PORTFOLIO ENDPOINT ==========
-
-// GET /api/portfolio - Real portfolio data
-app.get('/api/portfolio', authenticateToken, async (req, res) => {
-  try {
-    const portfolio = await dbQuery.all(
-      `SELECT * FROM portfolio 
-       WHERE user_id = ? 
-       ORDER BY updated_at DESC`,
-      [req.user.id]
-    );
-    
-    // If empty portfolio, check if user has any trades
-    if (portfolio.length === 0) {
-      const userTrades = await dbQuery.all(
-        `SELECT * FROM trades WHERE user_id = ?`,
-        [req.user.id]
-      );
-      
-      if (userTrades.length === 0) {
-        return res.json([]); // Return empty array
-      }
-    }
-    
-    res.json(portfolio);
-  } catch (error) {
-    console.error('Portfolio error:', error);
-    res.status(500).json({ error: 'Failed to fetch portfolio' });
-  }
-});
-
-// ========== TRANSACTIONS ENDPOINT ==========
-
-// GET /api/transactions - Real transactions data
-app.get('/api/transactions', authenticateToken, async (req, res) => {
-  try {
-    const transactions = await dbQuery.all(
-      `SELECT * FROM transactions 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC 
-       LIMIT 50`,
-      [req.user.id]
-    );
-    
-    res.json(transactions);
-  } catch (error) {
-    console.error('Transactions error:', error);
-    res.status(500).json({ error: 'Failed to fetch transactions' });
-  }
-});
-
-// ========== TRADE HISTORY ENDPOINT ==========
-
-// GET /api/trade/history - Real trade history
-app.get('/api/trade/history', authenticateToken, async (req, res) => {
-  try {
-    const trades = await dbQuery.all(
-      `SELECT * FROM trades 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC 
-       LIMIT 50`,
-      [req.user.id]
-    );
-    
-    res.json(trades);
-  } catch (error) {
-    console.error('Trade history error:', error);
-    res.status(500).json({ error: 'Failed to fetch trade history' });
-  }
-});
-
-// ========== TRADE EXECUTION ENDPOINT ==========
-
-// POST /api/trade - Execute trade with real database operations
-app.post('/api/trade', authenticateToken, async (req, res) => {
-  try {
-    const { type, symbol, amount, account_type, prediction } = req.body;
-    
-    if (!['buy', 'sell'].includes(type)) {
-      return res.status(400).json({ error: 'Invalid trade type' });
-    }
-    
-    if (!symbol || !amount || !account_type) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-    
-    const coinData = cryptoData[symbol];
-    if (!coinData) {
-      return res.status(404).json({ error: 'Coin not found' });
-    }
-    
-    const currentPrice = coinData.price;
-    const totalCost = type === 'buy' ? amount : amount * currentPrice;
-    const fee = totalCost * 0.001; // 0.1% fee
-    
-    // Get user's current balance
-    const user = await dbQuery.get(
-      'SELECT * FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    let newFundingBalance = user.funding_balance;
-    let newDemoBalance = user.demo_balance;
-    
-    // Validate balance
-    if (account_type === 'funding') {
-      if (type === 'buy' && user.funding_balance < (totalCost + fee)) {
-        return res.status(400).json({ 
-          error: 'Insufficient funds in funding account',
-          required: totalCost + fee,
-          available: user.funding_balance
-        });
-      }
-    } else if (account_type === 'demo') {
-      if (type === 'buy' && user.demo_balance < (totalCost + fee)) {
-        return res.status(400).json({ 
-          error: 'Insufficient funds in demo account',
-          required: totalCost + fee,
-          available: user.demo_balance
-        });
-      }
-    } else {
-      return res.status(400).json({ error: 'Invalid account type' });
-    }
-    
-    // Start transaction
-    await dbQuery.run('BEGIN TRANSACTION');
-    
+    // Save to database
     try {
-      // Update user balance
-      if (account_type === 'funding') {
-        if (type === 'buy') {
-          newFundingBalance = user.funding_balance - (totalCost + fee);
-        } else {
-          newFundingBalance = user.funding_balance + (totalCost - fee);
-        }
-        
-        await dbQuery.run(
-          'UPDATE users SET funding_balance = ? WHERE id = ?',
-          [newFundingBalance, req.user.id]
-        );
-      } else {
-        if (type === 'buy') {
-          newDemoBalance = user.demo_balance - (totalCost + fee);
-        } else {
-          newDemoBalance = user.demo_balance + (totalCost - fee);
-        }
-        
-        await dbQuery.run(
-          'UPDATE users SET demo_balance = ? WHERE id = ?',
-          [newDemoBalance, req.user.id]
-        );
-      }
-      
-      // Record the trade
-      const tradeResult = await dbQuery.run(
-        `INSERT INTO trades (user_id, type, symbol, amount, price, total, fee, account_type, prediction, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
-        [req.user.id, type, symbol, amount, currentPrice, totalCost, fee, account_type, prediction]
-      );
-      
-      // Update portfolio
-      if (type === 'buy') {
-        const existingHolding = await dbQuery.get(
-          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
-          [req.user.id, symbol, account_type]
-        );
-        
-        if (existingHolding) {
-          // Update existing holding
-          const newAmount = existingHolding.amount + (amount / currentPrice);
-          const avgPurchasePrice = (
-            (existingHolding.amount * existingHolding.purchase_price) + 
-            (amount / currentPrice * currentPrice)
-          ) / newAmount;
-          
-          await dbQuery.run(
-            `UPDATE portfolio SET 
-             amount = ?,
-             purchase_price = ?,
-             updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [newAmount, avgPurchasePrice, existingHolding.id]
-          );
-        } else {
-          // Create new holding
-          await dbQuery.run(
-            `INSERT INTO portfolio (user_id, coin_symbol, amount, purchase_price, account_type)
-             VALUES (?, ?, ?, ?, ?)`,
-            [req.user.id, symbol, amount / currentPrice, currentPrice, account_type]
-          );
-        }
-      } else {
-        // Sell transaction
-        const existingHolding = await dbQuery.get(
-          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
-          [req.user.id, symbol, account_type]
-        );
-        
-        if (!existingHolding || existingHolding.amount < amount) {
-          throw new Error('Insufficient coin holdings to sell');
-        }
-        
-        const newAmount = existingHolding.amount - amount;
-        
-        if (newAmount <= 0) {
-          // Remove from portfolio
-          await dbQuery.run(
-            'DELETE FROM portfolio WHERE id = ?',
-            [existingHolding.id]
-          );
-        } else {
-          // Update holding
-          await dbQuery.run(
-            `UPDATE portfolio SET 
-             amount = ?,
-             updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [newAmount, existingHolding.id]
-          );
-        }
-      }
-      
-      // Record transaction
       await dbQuery.run(
-        `INSERT INTO transactions (user_id, username, type, amount, status, created_at)
-         VALUES (?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)`,
-        [req.user.id, req.user.username, type, totalCost]
+        'INSERT INTO price_history (symbol, price) VALUES (?, ?)',
+        [coin, cryptoData[coin].price]
       );
-      
-      await dbQuery.run('COMMIT');
-      
-      // Emit balance update via WebSocket
-      io.to(`user_${req.user.id}`).emit('balance_update', {
-        funding_balance: newFundingBalance,
-        demo_balance: newDemoBalance
-      });
-      
-      // Emit trade notification
-      io.to(`user_${req.user.id}`).emit('trade_executed', {
-        tradeId: tradeResult.id,
-        type,
-        symbol,
-        amount,
-        price: currentPrice,
-        total: totalCost
-      });
-      
-      res.json({
-        success: true,
-        message: `Trade ${type} executed successfully`,
-        funding_balance: newFundingBalance,
-        demo_balance: newDemoBalance,
-        trade: {
-          id: tradeResult.id,
-          type,
-          symbol,
-          amount,
-          price: currentPrice,
-          fee,
-          total: totalCost,
-          account_type,
-          prediction
-        }
-      });
-      
     } catch (error) {
-      await dbQuery.run('ROLLBACK');
-      throw error;
+      console.error('Failed to save price history:', error);
+    }
+  }
+  
+  // Broadcast update to all connected clients
+  io.emit('market_update', cryptoData);
+}
+
+async function initializeSampleData() {
+  try {
+    // Add some initial chat messages
+    await dbQuery.run(
+      `INSERT OR IGNORE INTO chat_messages (user_id, username, message, timestamp) VALUES
+       (0, 'System', 'Welcome to QuantumCoin Trading Platform!', datetime('now', '-2 hours')),
+       (0, 'Trader_Pro', 'Market looks bullish today! Great time to buy BTC', datetime('now', '-1 hour')),
+       (0, 'Crypto_Queen', 'Just made 15% profit on ETH trades!', datetime('now', '-30 minutes'))`
+    );
+    
+    // Add initial price history
+    const coins = ['BTC', 'ETH', 'DOGE', 'SOL', 'ADA', 'XRP', 'BNB'];
+    for (const coin of coins) {
+      if (!cryptoData[coin]) {
+        cryptoData[coin] = {
+          name: coin,
+          price: Math.random() * 1000,
+          change: (Math.random() - 0.5) * 10,
+          volume: Math.random() * 1000000000,
+          color: `#${Math.floor(Math.random()*16777215).toString(16)}`,
+          volatility: 0.02 + Math.random() * 0.03
+        };
+      }
+      
+      // Add 24 hours of price history
+      for (let i = 24; i >= 0; i--) {
+        const price = cryptoData[coin].price * (1 + (Math.random() - 0.5) * 0.02);
+        await dbQuery.run(
+          'INSERT INTO price_history (symbol, price, timestamp) VALUES (?, ?, datetime("now", ?))',
+          [coin, price, `-${i} hours`]
+        );
+      }
     }
     
+    console.log('✅ Sample data initialized');
   } catch (error) {
-    console.error('Trade execution error:', error);
-    res.status(500).json({ error: 'Failed to execute trade: ' + error.message });
+    console.error('Failed to initialize sample data:', error);
   }
-});
+}
 
-// ========== USER NOTIFICATIONS ENDPOINT ==========
-
-// GET /api/user/notifications - Real notifications
-app.get('/api/user/notifications', authenticateToken, async (req, res) => {
-  try {
-    const notifications = await dbQuery.all(
-      `SELECT * FROM user_notifications 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC 
-       LIMIT 20`,
-      [req.user.id]
-    );
-    
-    // Mark as read
-    await dbQuery.run(
-      'UPDATE user_notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0',
-      [req.user.id]
-    );
-    
-    res.json(notifications);
-  } catch (error) {
-    console.error('Notifications error:', error);
-    res.status(500).json({ error: 'Failed to fetch notifications' });
-  }
-});
 
 // ========== ADMIN ROUTES ==========
 
@@ -1327,6 +913,409 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
   }
 });
 
+// ✅ FIXED: Market data endpoint
+// GET /api/market/data - Real market data
+app.get('/api/market/data', authenticateToken, async (req, res) => {
+  try {
+    // Get latest prices from database if available
+    const priceHistory = await dbQuery.all(
+      `SELECT ph.* FROM price_history ph 
+       INNER JOIN (
+         SELECT symbol, MAX(timestamp) as max_time 
+         FROM price_history 
+         GROUP BY symbol
+       ) latest ON ph.symbol = latest.symbol AND ph.timestamp = latest.max_time`
+    );
+    
+    // If no history in DB, use simulated data
+    if (priceHistory.length === 0) {
+      return res.json(cryptoData);
+    }
+    
+    // Combine with cryptoData for full info
+    const result = {};
+    priceHistory.forEach(ph => {
+      const coinInfo = cryptoData[ph.symbol] || {
+        name: ph.symbol,
+        change: 0,
+        volume: 1000000,
+        color: '#00f0ff',
+        volatility: 0.02
+      };
+      
+      result[ph.symbol] = {
+        ...coinInfo,
+        price: ph.price
+      };
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Market data error:', error);
+    res.status(500).json({ error: 'Failed to fetch market data' });
+  }
+});
+
+// GET /api/trade/history - Real trade history
+app.get('/api/trade/history', authenticateToken, async (req, res) => {
+  try {
+    const trades = await dbQuery.all(
+      `SELECT * FROM trades 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [req.user.id]
+    );
+    
+    res.json(trades);
+  } catch (error) {
+    console.error('Trade history error:', error);
+    res.status(500).json({ error: 'Failed to fetch trade history' });
+  }
+});
+
+// POST /api/trade - Execute trade with real database operations
+app.post('/api/trade', authenticateToken, async (req, res) => {
+  try {
+    const { type, symbol, amount, account_type, prediction } = req.body;
+    
+    if (!['buy', 'sell'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid trade type' });
+    }
+    
+    if (!symbol || !amount || !account_type) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const coinData = cryptoData[symbol];
+    if (!coinData) {
+      return res.status(404).json({ error: 'Coin not found' });
+    }
+    
+    const currentPrice = coinData.price;
+    const totalCost = type === 'buy' ? amount : amount * currentPrice;
+    const fee = totalCost * 0.001; // 0.1% fee
+    
+    // Get user's current balance
+    const user = await dbQuery.get(
+      'SELECT * FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    let newFundingBalance = user.funding_balance;
+    let newDemoBalance = user.demo_balance;
+    
+    // Validate balance
+    if (account_type === 'funding') {
+      if (type === 'buy' && user.funding_balance < (totalCost + fee)) {
+        return res.status(400).json({ 
+          error: 'Insufficient funds in funding account',
+          required: totalCost + fee,
+          available: user.funding_balance
+        });
+      }
+    } else if (account_type === 'demo') {
+      if (type === 'buy' && user.demo_balance < (totalCost + fee)) {
+        return res.status(400).json({ 
+          error: 'Insufficient funds in demo account',
+          required: totalCost + fee,
+          available: user.demo_balance
+        });
+      }
+    } else {
+      return res.status(400).json({ error: 'Invalid account type' });
+    }
+    
+    // Start transaction
+    await dbQuery.run('BEGIN TRANSACTION');
+    
+    try {
+      // Update user balance
+      if (account_type === 'funding') {
+        if (type === 'buy') {
+          newFundingBalance = user.funding_balance - (totalCost + fee);
+        } else {
+          newFundingBalance = user.funding_balance + (totalCost - fee);
+        }
+        
+        await dbQuery.run(
+          'UPDATE users SET funding_balance = ? WHERE id = ?',
+          [newFundingBalance, req.user.id]
+        );
+      } else {
+        if (type === 'buy') {
+          newDemoBalance = user.demo_balance - (totalCost + fee);
+        } else {
+          newDemoBalance = user.demo_balance + (totalCost - fee);
+        }
+        
+        await dbQuery.run(
+          'UPDATE users SET demo_balance = ? WHERE id = ?',
+          [newDemoBalance, req.user.id]
+        );
+      }
+      
+      // Record the trade
+      const tradeResult = await dbQuery.run(
+        `INSERT INTO trades (user_id, type, symbol, amount, price, total, fee, account_type, prediction, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
+        [req.user.id, type, symbol, amount, currentPrice, totalCost, fee, account_type, prediction]
+      );
+      
+      // Update portfolio
+      if (type === 'buy') {
+        const existingHolding = await dbQuery.get(
+          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
+          [req.user.id, symbol, account_type]
+        );
+        
+        if (existingHolding) {
+          // Update existing holding
+          const newAmount = existingHolding.amount + (amount / currentPrice);
+          const avgPurchasePrice = (
+            (existingHolding.amount * existingHolding.purchase_price) + 
+            (amount / currentPrice * currentPrice)
+          ) / newAmount;
+          
+          await dbQuery.run(
+            `UPDATE portfolio SET 
+             amount = ?,
+             purchase_price = ?,
+             updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [newAmount, avgPurchasePrice, existingHolding.id]
+          );
+        } else {
+          // Create new holding
+          await dbQuery.run(
+            `INSERT INTO portfolio (user_id, coin_symbol, amount, purchase_price, account_type)
+             VALUES (?, ?, ?, ?, ?)`,
+            [req.user.id, symbol, amount / currentPrice, currentPrice, account_type]
+          );
+        }
+      } else {
+        // Sell transaction
+        const existingHolding = await dbQuery.get(
+          'SELECT * FROM portfolio WHERE user_id = ? AND coin_symbol = ? AND account_type = ?',
+          [req.user.id, symbol, account_type]
+        );
+        
+        if (!existingHolding || existingHolding.amount < amount) {
+          throw new Error('Insufficient coin holdings to sell');
+        }
+        
+        const newAmount = existingHolding.amount - amount;
+        
+        if (newAmount <= 0) {
+          // Remove from portfolio
+          await dbQuery.run(
+            'DELETE FROM portfolio WHERE id = ?',
+            [existingHolding.id]
+          );
+        } else {
+          // Update holding
+          await dbQuery.run(
+            `UPDATE portfolio SET 
+             amount = ?,
+             updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [newAmount, existingHolding.id]
+          );
+        }
+      }
+      
+      // Record transaction
+      await dbQuery.run(
+        `INSERT INTO transactions (user_id, username, type, amount, status, created_at)
+         VALUES (?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)`,
+        [req.user.id, req.user.username, type, totalCost]
+      );
+      
+      await dbQuery.run('COMMIT');
+      
+      // Emit balance update via WebSocket
+      io.to(`user_${req.user.id}`).emit('balance_update', {
+        funding_balance: newFundingBalance,
+        demo_balance: newDemoBalance
+      });
+      
+      // Emit trade notification
+      io.to(`user_${req.user.id}`).emit('trade_executed', {
+        tradeId: tradeResult.id,
+        type,
+        symbol,
+        amount,
+        price: currentPrice,
+        total: totalCost
+      });
+      
+      res.json({
+        success: true,
+        message: `Trade ${type} executed successfully`,
+        funding_balance: newFundingBalance,
+        demo_balance: newDemoBalance,
+        trade: {
+          id: tradeResult.id,
+          type,
+          symbol,
+          amount,
+          price: currentPrice,
+          fee,
+          total: totalCost,
+          account_type,
+          prediction
+        }
+      });
+      
+    } catch (error) {
+      await dbQuery.run('ROLLBACK');
+      throw error;
+    }
+    
+  } catch (error) {
+    console.error('Trade execution error:', error);
+    res.status(500).json({ error: 'Failed to execute trade: ' + error.message });
+  }
+});
+
+
+
+// GET /api/market/chart/:coin/:timeframe - Real chart data
+app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res) => {
+  try {
+    const { coin, timeframe } = req.params;
+    
+    let hoursBack = 24;
+    switch(timeframe) {
+      case '1h': hoursBack = 1; break;
+      case '1d': hoursBack = 24; break;
+      case '1w': hoursBack = 168; break;
+      case '1m': hoursBack = 720; break;
+      case '1y': hoursBack = 8760; break;
+      default: hoursBack = 24;
+    }
+    
+    const chartData = await dbQuery.all(
+      `SELECT 
+         timestamp as time,
+         MIN(price) as low,
+         MAX(price) as high,
+         SUBSTR(GROUP_CONCAT(price), 1, INSTR(GROUP_CONCAT(price), ',')-1) as open,
+         SUBSTR(GROUP_CONCAT(price), LENGTH(GROUP_CONCAT(price)) - INSTR(REVERSE(GROUP_CONCAT(price)), ',') + 2) as close
+       FROM price_history 
+       WHERE symbol = ? 
+         AND timestamp >= datetime('now', ?)
+       GROUP BY strftime('%Y-%m-%d %H', timestamp)
+       ORDER BY timestamp ASC`,
+      [coin, `-${hoursBack} hours`]
+    );
+    
+    // If no data in DB, generate fake data
+    if (chartData.length === 0) {
+      const coinData = cryptoData[coin];
+      if (!coinData) {
+        return res.status(404).json({ error: 'Coin not found' });
+      }
+      
+      const fakeData = [];
+      const now = Date.now();
+      let interval = 0;
+      
+      switch(timeframe) {
+        case '1h': interval = 60000; break;
+        case '1d': interval = 3600000; break;
+        case '1w': interval = 86400000; break;
+        case '1m': interval = 86400000; break;
+        case '1y': interval = 2592000000; break;
+        default: interval = 60000;
+      }
+      
+      let currentPrice = coinData.price;
+      for (let i = 100; i >= 0; i--) {
+        const time = new Date(now - (i * interval));
+        const change = (Math.random() - 0.5) * coinData.volatility;
+        const open = currentPrice * (1 + change);
+        const close = open * (1 + (Math.random() - 0.5) * 0.01);
+        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
+        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
+        
+        fakeData.push({
+          time: time.toISOString(),
+          open: parseFloat(open.toFixed(2)),
+          high: parseFloat(high.toFixed(2)),
+          low: parseFloat(low.toFixed(2)),
+          close: parseFloat(close.toFixed(2))
+        });
+        
+        currentPrice = close;
+      }
+      return res.json(fakeData);
+    }
+    
+    res.json(chartData);
+  } catch (error) {
+    console.error('Chart data error:', error);
+    res.status(500).json({ error: 'Failed to fetch chart data' });
+  }
+});
+
+// GET /api/portfolio - Real portfolio data
+app.get('/api/portfolio', authenticateToken, async (req, res) => {
+  try {
+    const portfolio = await dbQuery.all(
+      `SELECT * FROM portfolio 
+       WHERE user_id = ? 
+       ORDER BY updated_at DESC`,
+      [req.user.id]
+    );
+    
+    // If empty portfolio, check if user has any trades
+    if (portfolio.length === 0) {
+      const userTrades = await dbQuery.all(
+        `SELECT * FROM trades WHERE user_id = ?`,
+        [req.user.id]
+      );
+      
+      if (userTrades.length === 0) {
+        return res.json([]); // Return empty array
+      }
+    }
+    
+    res.json(portfolio);
+  } catch (error) {
+    console.error('Portfolio error:', error);
+    res.status(500).json({ error: 'Failed to fetch portfolio' });
+  }
+});
+
+// GET /api/user/notifications - Real notifications
+app.get('/api/user/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await dbQuery.all(
+      `SELECT * FROM user_notifications 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 20`,
+      [req.user.id]
+    );
+    
+    // Mark as read
+    await dbQuery.run(
+      'UPDATE user_notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0',
+      [req.user.id]
+    );
+    
+    res.json(notifications);
+  } catch (error) {
+    console.error('Notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
 app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1385,6 +1374,8 @@ app.post('/api/admin/transactions/:id/reject', authenticateAdmin, async (req, re
 });
 
 // ========== WEB SOCKET ==========
+app.set('socketio', io);
+
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
   
@@ -1439,9 +1430,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// Update prices every 3 seconds
-setInterval(updateMarketPrices, 3000);
-
 // ========== ERROR HANDLING ==========
 app.use('/api/*', (req, res) => {
   res.status(404).json({ 
@@ -1450,21 +1438,7 @@ app.use('/api/*', (req, res) => {
       health: 'GET /api/health',
       auth: {
         login: 'POST /api/auth/login',
-        admin_login: 'POST /api/admin/login',
-        logout: 'POST /api/auth/logout'
-      },
-      market: {
-        data: 'GET /api/market/data',
-        chart: 'GET /api/market/chart/:coin/:timeframe'
-      },
-      trading: {
-        portfolio: 'GET /api/portfolio',
-        transactions: 'GET /api/transactions',
-        trade_history: 'GET /api/trade/history',
-        execute_trade: 'POST /api/trade'
-      },
-      user: {
-        notifications: 'GET /api/user/notifications'
+        admin_login: 'POST /api/admin/login'
       },
       admin: {
         stats: 'GET /api/admin/dashboard (Admin)',
@@ -1490,41 +1464,7 @@ app.use((err, req, res, next) => {
 });
 
 // ========== INITIALIZE AND START SERVER ==========
-async function startServer() {
-  try {
-    console.log('🚀 Starting QuantumCoin API Server...');
-    
-    // Initialize database
-    await initDatabase();
-    console.log('✅ Database initialized');
-    
-    // Initialize sample data
-    await initializeSampleData();
-    console.log('✅ Sample data loaded');
-    
-    const PORT = process.env.PORT || 10000;
-    server.listen(PORT, () => {
-      console.log(`🚀 QuantumCoin API with Admin Panel running on port ${PORT}`);
-      console.log(`🔗 API available at: http://localhost:${PORT}/api`);
-      console.log(`👑 Admin login: admin / admin123`);
-      console.log(`👤 User login: testuser / password123`);
-      console.log(`💸 Admin Panel Features:`);
-      console.log(`   • Complete withdrawal management`);
-      console.log(`   • Deposit approval system`);
-      console.log(`   • User management`);
-      console.log(`   • Real-time notifications`);
-      console.log(`   • Dashboard statistics`);
-      console.log(`📊 Trading Features:`);
-      console.log(`   • Real-time market data`);
-      console.log(`   • Portfolio tracking`);
-      console.log(`   • Trade execution`);
-      console.log(`   • Live chat`);
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
-}
+initDatabase();
 
 // Clean up old sessions every hour
 setInterval(() => {
@@ -1538,8 +1478,20 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-// Start the server
-startServer();
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`🚀 QuantumCoin API with Admin Panel running on port ${PORT}`);
+  console.log(`🔗 API available at: http://localhost:${PORT}/api`);
+  console.log(`👑 Admin login: admin / admin123`);
+  console.log(`👤 User login: testuser / password123`);
+  console.log(`💸 Admin Panel Features:`);
+  console.log(`   • Complete withdrawal management`);
+  console.log(`   • Deposit approval system`);
+  console.log(`   • User management`);
+  console.log(`   • Real-time notifications`);
+  console.log(`   • Dashboard statistics`);
+});
+
 
 // Export the server for use in other files if needed
 module.exports = { app, server };
