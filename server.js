@@ -239,8 +239,6 @@ async function initDatabase() {
 }
 // Database helper functions
 
-const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // Simple session storage
 const sessions = new Map();
