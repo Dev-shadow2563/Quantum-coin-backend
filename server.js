@@ -1046,7 +1046,7 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
 // GET /api/market/data - Real market data
 app.get('/api/market/data', authenticateToken, async (req, res) => {
   try {
-    const ALL_COINS = ['BTC','ETH','DOGE','SHIB','ADA','SOL','XRP','BNB','MATIC','AVAX','TON','PEPE'];
+    const ALL_COINS = ['BTC','ETH','DOGE','SHIB','ADA','SOL','XRP','BNB'];
 
     // Get latest prices
     const priceHistory = await dbQuery.all(`
