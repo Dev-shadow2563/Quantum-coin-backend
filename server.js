@@ -282,31 +282,115 @@ function authenticateAdmin(req, res, next) {
 
 // ========== MARKET DATA SIMULATION ==========
 let cryptoData = {
-  BTC: { 
-    name: 'Bitcoin', 
-    price: 42150.75, 
-    change: 2.34, 
-    volume: 24500000000, 
+  BTC: {
+    name: 'Bitcoin',
+    price: 42150.75,
+    change: 2.34,
+    volume: 24500000000,
     color: '#f7931a',
-    volatility: 0.02 
+    volatility: 0.02
   },
-  ETH: { 
-    name: 'Ethereum', 
-    price: 2315.42, 
-    change: 3.21, 
-    volume: 9800000000, 
+
+  ETH: {
+    name: 'Ethereum',
+    price: 2315.42,
+    change: 3.21,
+    volume: 9800000000,
     color: '#627eea',
-    volatility: 0.03 
+    volatility: 0.03
   },
-  DOGE: { 
-    name: 'Dogecoin', 
-    price: 0.086, 
-    change: 5.45, 
-    volume: 1200000000, 
+
+  BNB: {
+    name: 'Binance Coin',
+    price: 312.50,
+    change: 1.12,
+    volume: 850000000,
+    color: '#f3ba2f',
+    volatility: 0.025
+  },
+
+  SOL: {
+    name: 'Solana',
+    price: 102.84,
+    change: 4.98,
+    volume: 2100000000,
+    color: '#14f195',
+    volatility: 0.045
+  },
+
+  XRP: {
+    name: 'Ripple',
+    price: 0.62,
+    change: -1.85,
+    volume: 1800000000,
+    color: '#23292f',
+    volatility: 0.04
+  },
+
+  ADA: {
+    name: 'Cardano',
+    price: 0.47,
+    change: 2.01,
+    volume: 720000000,
+    color: '#0033ad',
+    volatility: 0.035
+  },
+
+  DOGE: {
+    name: 'Dogecoin',
+    price: 0.086,
+    change: 5.45,
+    volume: 1200000000,
     color: '#c2a633',
-    volatility: 0.05 
+    volatility: 0.05
+  },
+
+  SHIB: {
+    name: 'Shiba Inu',
+    price: 0.000021,
+    change: 6.72,
+    volume: 650000000,
+    color: '#ff4d00',
+    volatility: 0.07
+  },
+
+  MATIC: {
+    name: 'Polygon',
+    price: 0.89,
+    change: 3.77,
+    volume: 940000000,
+    color: '#8247e5',
+    volatility: 0.04
+  },
+
+  AVAX: {
+    name: 'Avalanche',
+    price: 34.18,
+    change: 2.55,
+    volume: 560000000,
+    color: '#e84142',
+    volatility: 0.045
+  },
+
+  TON: {
+    name: 'Toncoin',
+    price: 2.35,
+    change: 1.40,
+    volume: 310000000,
+    color: '#0098ea',
+    volatility: 0.03
+  },
+
+  PEPE: {
+    name: 'Pepe',
+    price: 0.0000013,
+    change: 9.80,
+    volume: 420000000,
+    color: '#57b846',
+    volatility: 0.09
   }
 };
+
 
 // Simulate market updates
 function updateMarketPrices() {
@@ -1294,31 +1378,20 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
   try {
     const { coin, timeframe } = req.params;
 
-    /* ---------------- TIMEFRAME ---------------- */
-    let hoursBack = 24;
-    let interval = 3600000; // default 1h
+    /* ---------------- TIMEFRAME CONFIG ---------------- */
+    const intervals = {
+      '1h': { hours: 1, interval: 60000, type: 'minute' },
+      '1d': { hours: 24, interval: 3600000, type: 'hour' },
+      '1w': { hours: 168, interval: 86400000, type: 'day' },
+      '1m': { hours: 720, interval: 86400000, type: 'day' },
+      '1y': { hours: 8760, interval: 2592000000, type: 'month' }
+    };
 
-    switch (timeframe) {
-      case '1h':
-        hoursBack = 1;
-        interval = 60000;
-        break;
-      case '1d':
-        hoursBack = 24;
-        interval = 3600000;
-        break;
-      case '1w':
-        hoursBack = 168;
-        interval = 86400000;
-        break;
-      case '1m':
-        hoursBack = 720;
-        interval = 86400000;
-        break;
-      case '1y':
-        hoursBack = 8760;
-        interval = 2592000000;
-        break;
+    const config = intervals[timeframe] || intervals['1d'];
+
+    const coinData = cryptoData[coin];
+    if (!coinData) {
+      return res.status(404).json({ error: 'Coin not found' });
     }
 
     /* ---------------- FETCH RAW DATA ---------------- */
@@ -1328,30 +1401,26 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
        WHERE symbol = ?
          AND timestamp >= datetime('now', ?)
        ORDER BY timestamp ASC`,
-      [coin, `-${hoursBack} hours`]
+      [coin, `-${config.hours} hours`]
     );
 
-    /* ---------------- FAKE DATA IF EMPTY ---------------- */
-    if (rawData.length === 0) {
-      const coinData = cryptoData[coin];
-      if (!coinData) {
-        return res.status(404).json({ error: 'Coin not found' });
-      }
-
+    /* ---------------- HELPER: FAKE CANDLES ---------------- */
+    const generateFakeData = (points = 100) => {
       let currentPrice = coinData.price;
       const now = Date.now();
-      const fakeData = [];
+      const fake = [];
 
-      for (let i = 100; i >= 0; i--) {
-        const time = new Date(now - i * interval);
+      for (let i = points; i >= 0; i--) {
+        const time = new Date(now - i * config.interval);
 
-        const change = (Math.random() - 0.5) * coinData.volatility;
-        const open = currentPrice * (1 + change);
-        const close = open * (1 + (Math.random() - 0.5) * 0.01);
+        const change = (Math.random() - 0.5) * (coinData.volatility || 0.02);
+
+        const open = currentPrice;
+        const close = open * (1 + change);
         const high = Math.max(open, close) * (1 + Math.random() * 0.01);
         const low = Math.min(open, close) * (1 - Math.random() * 0.01);
 
-        fakeData.push({
+        fake.push({
           time: time.toISOString(),
           open: +open.toFixed(2),
           high: +high.toFixed(2),
@@ -1362,7 +1431,12 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
         currentPrice = close;
       }
 
-      return res.json(fakeData);
+      return fake;
+    };
+
+    /* ---------------- IF EMPTY → FAKE ---------------- */
+    if (rawData.length === 0) {
+      return res.json(generateFakeData());
     }
 
     /* ---------------- GROUP → OHLC ---------------- */
@@ -1370,11 +1444,28 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
 
     rawData.forEach(row => {
       const d = new Date(row.timestamp);
+      let key;
 
-      const key =
-        `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-` +
-        `${String(d.getDate()).padStart(2,'0')} ` +
-        `${String(d.getHours()).padStart(2,'0')}:00:00`;
+      switch (config.type) {
+        case 'minute':
+          key = `${d.getHours()}:${Math.floor(d.getMinutes() / 5) * 5}`;
+          break;
+
+        case 'hour':
+          key = `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()} ${d.getHours()}:00`;
+          break;
+
+        case 'day':
+          key = `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+          break;
+
+        case 'month':
+          key = `${d.getFullYear()}-${d.getMonth()+1}`;
+          break;
+
+        default:
+          key = d.toISOString();
+      }
 
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(row.price);
@@ -1390,40 +1481,20 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
 
     chartData.sort((a, b) => new Date(a.time) - new Date(b.time));
 
-    /* ---------------- PAD IF TOO SMALL ---------------- */
+    /* ---------------- PAD SMALL DATASETS ---------------- */
     if (chartData.length < 10) {
-      const coinData = cryptoData[coin];
-      let lastPrice =
-        chartData.length > 0 ? chartData[chartData.length - 1].close : coinData.price;
-
-      for (let i = chartData.length; i < 100; i++) {
-        const time = new Date(Date.now() - i * interval);
-
-        const change = (Math.random() - 0.5) * coinData.volatility;
-        const open = lastPrice * (1 + change);
-        const close = open * (1 + (Math.random() - 0.5) * 0.01);
-        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-
-        chartData.unshift({
-          time: time.toISOString(),
-          open: +open.toFixed(2),
-          high: +high.toFixed(2),
-          low: +low.toFixed(2),
-          close: +close.toFixed(2)
-        });
-
-        lastPrice = close;
-      }
+      const padding = generateFakeData(100 - chartData.length);
+      chartData.unshift(...padding);
     }
 
     res.json(chartData);
 
   } catch (error) {
-    console.error('Chart data error:', error);
+    console.error('Chart endpoint error:', error);
     res.status(500).json({ error: 'Failed to fetch chart data' });
   }
 });
+
 
 
 // GET /api/portfolio - Real portfolio data
@@ -1476,6 +1547,180 @@ app.get('/api/user/notifications', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// Add this after the existing market routes
+
+// ========== TRANSACTIONS ROUTES ==========
+// GET /api/transactions - Get user transactions
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  try {
+    const transactions = await dbQuery.all(
+      `SELECT * FROM transactions 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [req.user.id]
+    );
+    
+    res.json(transactions);
+  } catch (error) {
+    console.error('Transactions error:', error);
+    res.status(500).json({ error: 'Failed to fetch transactions' });
+  }
+});
+
+// POST /api/transactions/deposit - Create deposit request
+app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount, network, wallet_address, notes } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    
+    const result = await dbQuery.run(
+      `INSERT INTO transactions (user_id, username, type, amount, network, wallet_address, status, user_notes)
+       VALUES (?, ?, 'deposit', ?, ?, ?, 'pending', ?)`,
+      [req.user.id, req.user.username, amount, network, wallet_address, notes || '']
+    );
+    
+    // Create notification for user
+    await createNotification(
+      req.user.id,
+      'info',
+      'Deposit Requested 💰',
+      `Your deposit request of $${amount.toFixed(2)} has been received and is pending admin approval.`,
+      { 
+        transactionId: result.id,
+        amount: amount,
+        action: 'view_transaction'
+      }
+    );
+    
+    // Notify admins
+    io.to('admin_room').emit('new_deposit_request', {
+      transactionId: result.id,
+      username: req.user.username,
+      amount: amount,
+      network: network,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({
+      success: true,
+      message: 'Deposit request submitted successfully',
+      transactionId: result.id
+    });
+    
+  } catch (error) {
+    console.error('Deposit error:', error);
+    res.status(500).json({ error: 'Failed to create deposit request' });
+  }
+});
+
+// POST /api/transactions/withdraw - Create withdrawal request
+app.post('/api/transactions/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount, network, wallet_address, notes } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    
+    // Check user balance
+    const user = await dbQuery.get(
+      'SELECT funding_balance FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (!user || user.funding_balance < amount) {
+      return res.status(400).json({ 
+        error: 'Insufficient funds',
+        available: user?.funding_balance || 0,
+        required: amount
+      });
+    }
+    
+    // Deduct from balance temporarily
+    await dbQuery.run(
+      'UPDATE users SET funding_balance = funding_balance - ? WHERE id = ?',
+      [amount, req.user.id]
+    );
+    
+    // Create withdrawal request
+    const result = await dbQuery.run(
+      `INSERT INTO transactions (user_id, username, type, amount, network, wallet_address, status, user_notes)
+       VALUES (?, ?, 'withdrawal', ?, ?, ?, 'pending', ?)`,
+      [req.user.id, req.user.username, amount, network, wallet_address, notes || '']
+    );
+    
+    // Create notification for user
+    await createNotification(
+      req.user.id,
+      'info',
+      'Withdrawal Requested 💸',
+      `Your withdrawal request of $${amount.toFixed(2)} has been received and is pending admin approval.`,
+      { 
+        transactionId: result.id,
+        amount: amount,
+        network: network,
+        wallet_address: wallet_address,
+        action: 'view_transaction'
+      }
+    );
+    
+    // Notify admins
+    io.to('admin_room').emit('new_withdrawal_request', {
+      transactionId: result.id,
+      username: req.user.username,
+      amount: amount,
+      network: network,
+      wallet_address: wallet_address,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Emit balance update
+    const updatedUser = await dbQuery.get(
+      'SELECT funding_balance FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    io.to(`user_${req.user.id}`).emit('balance_update', {
+      funding_balance: updatedUser.funding_balance
+    });
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal request submitted successfully',
+      transactionId: result.id,
+      new_balance: updatedUser.funding_balance
+    });
+    
+  } catch (error) {
+    console.error('Withdrawal error:', error);
+    res.status(500).json({ error: 'Failed to create withdrawal request' });
+  }
+});
+
+// ========== USER DATA ROUTES ==========
+// GET /api/user/data - Get complete user data
+app.get('/api/user/data', authenticateToken, async (req, res) => {
+  try {
+    const user = await dbQuery.get(
+      'SELECT id, username, email, funding_balance, demo_balance, created_at, last_login FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    console.error('User data error:', error);
+    res.status(500).json({ error: 'Failed to fetch user data' });
   }
 });
 
