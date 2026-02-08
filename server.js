@@ -42,71 +42,6 @@ app.use(express.json({ limit: '10mb' }));
 // ========== DATABASE SETUP ==========
 const db = new sqlite3.Database(':memory:');
 
-function initDatabase() {
-    initializeSampleData();
-  db.serialize(() => {
-    // Users table
-db.run(`CREATE TABLE IF NOT EXISTS trades (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  symbol TEXT NOT NULL,
-  amount REAL NOT NULL,
-  price REAL NOT NULL,
-  total REAL NOT NULL,
-  fee REAL DEFAULT 0,
-  account_type TEXT NOT NULL,
-  prediction TEXT,
-  profit_loss REAL,
-  status TEXT DEFAULT 'completed',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users (id)
-)`);
-
-db.run(`CREATE TABLE IF NOT EXISTS portfolio (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  coin_symbol TEXT NOT NULL,
-  amount REAL NOT NULL,
-  purchase_price REAL NOT NULL,
-  account_type TEXT NOT NULL,
-  current_value REAL,
-  profit_loss REAL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(user_id, coin_symbol, account_type),
-  FOREIGN KEY (user_id) REFERENCES users (id)
-)`);
-
-db.run(`CREATE TABLE IF NOT EXISTS price_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  symbol TEXT NOT NULL,
-  price REAL NOT NULL,
-  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
-
-db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
-  username TEXT NOT NULL,
-  message TEXT NOT NULL,
-  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
-      
-    // Insert default admin if not exists
-    const adminPassword = bcrypt.hashSync('admin123', 10);
-    db.run(`INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
-      ['admin', adminPassword]);
-
-    // Insert default user if not exists
-    const userPassword = bcrypt.hashSync('password123', 10);
-    db.run(`INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
-      ['testuser', 'test@quantumcoin.com', userPassword, 5000.00, 100000.00]);
-    
-    console.log('✅ Database initialized with complete features');
-  });
-}
-
 // Database helper functions
 const dbQuery = {
   get: (sql, params = []) => {
@@ -136,6 +71,173 @@ const dbQuery = {
     });
   }
 };
+
+async function initDatabase() {
+  return new Promise((resolve, reject) => {
+    db.serialize(async () => {
+      try {
+        console.log('🗄️  Initializing database...');
+        
+        // Users table
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          funding_balance REAL DEFAULT 5000.00,
+          demo_balance REAL DEFAULT 100000.00,
+          google_id TEXT UNIQUE,
+          name TEXT,
+          picture TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_login DATETIME,
+          is_active BOOLEAN DEFAULT 1
+        )`, async (err) => {
+          if (err) reject(err);
+          
+          console.log('✅ Users table created');
+          
+          // Insert default user if not exists
+          const userPassword = bcrypt.hashSync('password123', 10);
+          await dbQuery.run(
+            `INSERT OR IGNORE INTO users (username, email, password, funding_balance, demo_balance) VALUES (?, ?, ?, ?, ?)`, 
+            ['testuser', 'test@quantumcoin.com', userPassword, 0.00, 100000.00]
+          );
+          console.log('✅ Default user created');
+        });
+
+        // Transactions table
+        db.run(`CREATE TABLE IF NOT EXISTS transactions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          username TEXT NOT NULL,
+          type TEXT NOT NULL,
+          amount REAL NOT NULL,
+          currency TEXT DEFAULT 'USD',
+          status TEXT DEFAULT 'pending',
+          network TEXT,
+          wallet_address TEXT,
+          transaction_hash TEXT,
+          fees REAL DEFAULT 0,
+          bonus REAL DEFAULT 0,
+          admin_approved BOOLEAN DEFAULT 0,
+          admin_id INTEGER,
+          admin_notes TEXT,
+          user_notes TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          completed_at DATETIME,
+          FOREIGN KEY (user_id) REFERENCES users (id)
+        )`, (err) => {
+          if (err) reject(err);
+          console.log('✅ Transactions table created');
+        });
+
+        // User notifications table
+        db.run(`CREATE TABLE IF NOT EXISTS user_notifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          data TEXT,
+          is_read BOOLEAN DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users (id)
+        )`, (err) => {
+          if (err) reject(err);
+          console.log('✅ Notifications table created');
+        });
+
+        // Admin users table
+        db.run(`CREATE TABLE IF NOT EXISTS admins (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, async (err) => {
+          if (err) reject(err);
+          console.log('✅ Admins table created');
+          
+          // Insert default admin if not exists
+          const adminPassword = bcrypt.hashSync('admin123', 10);
+          await dbQuery.run(
+            `INSERT OR IGNORE INTO admins (username, password) VALUES (?, ?)`, 
+            ['admin', adminPassword]
+          );
+          console.log('✅ Default admin created');
+        });
+
+        // Trades table
+        db.run(`CREATE TABLE IF NOT EXISTS trades (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          amount REAL NOT NULL,
+          price REAL NOT NULL,
+          total REAL NOT NULL,
+          fee REAL DEFAULT 0,
+          account_type TEXT NOT NULL,
+          prediction TEXT,
+          profit_loss REAL,
+          status TEXT DEFAULT 'completed',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users (id)
+        )`, (err) => {
+          if (err) reject(err);
+          console.log('✅ Trades table created');
+        });
+
+        // Portfolio table
+        db.run(`CREATE TABLE IF NOT EXISTS portfolio (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          coin_symbol TEXT NOT NULL,
+          amount REAL NOT NULL,
+          purchase_price REAL NOT NULL,
+          account_type TEXT NOT NULL,
+          current_value REAL,
+          profit_loss REAL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, coin_symbol, account_type),
+          FOREIGN KEY (user_id) REFERENCES users (id)
+        )`, (err) => {
+          if (err) reject(err);
+          console.log('✅ Portfolio table created');
+        });
+
+        // Price history table
+        db.run(`CREATE TABLE IF NOT EXISTS price_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          symbol TEXT NOT NULL,
+          price REAL NOT NULL,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+          if (err) reject(err);
+          console.log('✅ Price history table created');
+        });
+
+        // Chat messages table
+        db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER,
+          username TEXT NOT NULL,
+          message TEXT NOT NULL,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+          if (err) reject(err);
+          console.log('✅ Chat messages table created');
+          resolve();
+        });
+        
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+// Database helper functions
 
 const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -251,9 +353,6 @@ async function createNotification(userId, type, title, message, data = {}) {
 }
 
 // ========== API ROUTES ==========
-// Add at the top of server.js with other imports
-const { OAuth2Client } = require('google-auth-library');
-
 // Add Google OAuth client configuration (use your actual Google Client ID)
 const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -290,20 +389,27 @@ app.post('/api/auth/google', async (req, res) => {
       const result = await dbQuery.run(
         `INSERT INTO users (username, email, password, funding_balance, demo_balance) 
          VALUES (?, ?, ?, ?, ?)`,
-        [username, email, `google_${googleId}`, 5000.00, 100000.00]
+        [username, email, `google_${googleId}`, 0.00, 100000.00]
       );
       
       user = {
         id: result.id,
         username: username,
         email: email,
-        funding_balance: 5000.00,
+        funding_balance: 0.00,
         demo_balance: 100000.00,
         name: name,
         picture: picture
       };
+    } else {
+      // Update last login for existing user
+      await dbQuery.run(
+        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?',
+        [user.id]
+      );
+      
+      console.log('Existing Google user logged in:', user.id);
     }
-    
     // Create session token
     const token = `google_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sessions.set(token, { 
