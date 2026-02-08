@@ -1289,83 +1289,142 @@ app.post('/api/trade', authenticateToken, async (req, res) => {
 
 
 // GET /api/market/chart/:coin/:timeframe - Real chart data
+// GET /api/market/chart/:coin/:timeframe - Real + fallback chart data
 app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res) => {
   try {
     const { coin, timeframe } = req.params;
-    
+
+    /* ---------------- TIMEFRAME ---------------- */
     let hoursBack = 24;
-    switch(timeframe) {
-      case '1h': hoursBack = 1; break;
-      case '1d': hoursBack = 24; break;
-      case '1w': hoursBack = 168; break;
-      case '1m': hoursBack = 720; break;
-      case '1y': hoursBack = 8760; break;
-      default: hoursBack = 24;
+    let interval = 3600000; // default 1h
+
+    switch (timeframe) {
+      case '1h':
+        hoursBack = 1;
+        interval = 60000;
+        break;
+      case '1d':
+        hoursBack = 24;
+        interval = 3600000;
+        break;
+      case '1w':
+        hoursBack = 168;
+        interval = 86400000;
+        break;
+      case '1m':
+        hoursBack = 720;
+        interval = 86400000;
+        break;
+      case '1y':
+        hoursBack = 8760;
+        interval = 2592000000;
+        break;
     }
-    
-    const chartData = await dbQuery.all(
-      `SELECT 
-         timestamp as time,
-         MIN(price) as low,
-         MAX(price) as high,
-         SUBSTR(GROUP_CONCAT(price), 1, INSTR(GROUP_CONCAT(price), ',')-1) as open,
-         SUBSTR(GROUP_CONCAT(price), LENGTH(GROUP_CONCAT(price)) - INSTR(REVERSE(GROUP_CONCAT(price)), ',') + 2) as close
-       FROM price_history 
-       WHERE symbol = ? 
+
+    /* ---------------- FETCH RAW DATA ---------------- */
+    const rawData = await dbQuery.all(
+      `SELECT timestamp, price
+       FROM price_history
+       WHERE symbol = ?
          AND timestamp >= datetime('now', ?)
-       GROUP BY strftime('%Y-%m-%d %H', timestamp)
        ORDER BY timestamp ASC`,
       [coin, `-${hoursBack} hours`]
     );
-    
-    // If no data in DB, generate fake data
-    if (chartData.length === 0) {
+
+    /* ---------------- FAKE DATA IF EMPTY ---------------- */
+    if (rawData.length === 0) {
       const coinData = cryptoData[coin];
       if (!coinData) {
         return res.status(404).json({ error: 'Coin not found' });
       }
-      
-      const fakeData = [];
-      const now = Date.now();
-      let interval = 0;
-      
-      switch(timeframe) {
-        case '1h': interval = 60000; break;
-        case '1d': interval = 3600000; break;
-        case '1w': interval = 86400000; break;
-        case '1m': interval = 86400000; break;
-        case '1y': interval = 2592000000; break;
-        default: interval = 60000;
-      }
-      
+
       let currentPrice = coinData.price;
+      const now = Date.now();
+      const fakeData = [];
+
       for (let i = 100; i >= 0; i--) {
-        const time = new Date(now - (i * interval));
+        const time = new Date(now - i * interval);
+
         const change = (Math.random() - 0.5) * coinData.volatility;
         const open = currentPrice * (1 + change);
         const close = open * (1 + (Math.random() - 0.5) * 0.01);
         const high = Math.max(open, close) * (1 + Math.random() * 0.01);
         const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-        
+
         fakeData.push({
           time: time.toISOString(),
-          open: parseFloat(open.toFixed(2)),
-          high: parseFloat(high.toFixed(2)),
-          low: parseFloat(low.toFixed(2)),
-          close: parseFloat(close.toFixed(2))
+          open: +open.toFixed(2),
+          high: +high.toFixed(2),
+          low: +low.toFixed(2),
+          close: +close.toFixed(2)
         });
-        
+
         currentPrice = close;
       }
+
       return res.json(fakeData);
     }
-    
+
+    /* ---------------- GROUP → OHLC ---------------- */
+    const grouped = {};
+
+    rawData.forEach(row => {
+      const d = new Date(row.timestamp);
+
+      const key =
+        `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-` +
+        `${String(d.getDate()).padStart(2,'0')} ` +
+        `${String(d.getHours()).padStart(2,'0')}:00:00`;
+
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(row.price);
+    });
+
+    const chartData = Object.entries(grouped).map(([time, prices]) => ({
+      time,
+      open: +prices[0].toFixed(2),
+      high: +Math.max(...prices).toFixed(2),
+      low: +Math.min(...prices).toFixed(2),
+      close: +prices[prices.length - 1].toFixed(2)
+    }));
+
+    chartData.sort((a, b) => new Date(a.time) - new Date(b.time));
+
+    /* ---------------- PAD IF TOO SMALL ---------------- */
+    if (chartData.length < 10) {
+      const coinData = cryptoData[coin];
+      let lastPrice =
+        chartData.length > 0 ? chartData[chartData.length - 1].close : coinData.price;
+
+      for (let i = chartData.length; i < 100; i++) {
+        const time = new Date(Date.now() - i * interval);
+
+        const change = (Math.random() - 0.5) * coinData.volatility;
+        const open = lastPrice * (1 + change);
+        const close = open * (1 + (Math.random() - 0.5) * 0.01);
+        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
+        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
+
+        chartData.unshift({
+          time: time.toISOString(),
+          open: +open.toFixed(2),
+          high: +high.toFixed(2),
+          low: +low.toFixed(2),
+          close: +close.toFixed(2)
+        });
+
+        lastPrice = close;
+      }
+    }
+
     res.json(chartData);
+
   } catch (error) {
     console.error('Chart data error:', error);
     res.status(500).json({ error: 'Failed to fetch chart data' });
   }
 });
+
 
 // GET /api/portfolio - Real portfolio data
 app.get('/api/portfolio', authenticateToken, async (req, res) => {
