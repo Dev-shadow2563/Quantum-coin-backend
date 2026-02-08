@@ -281,6 +281,10 @@ function authenticateAdmin(req, res, next) {
 }
 
 // ========== MARKET DATA SIMULATION ==========
+// ========== SERVER CODE (Backend) ==========
+// ... [Keep the beginning code the same until line 108] ...
+
+// ========== MARKET DATA SIMULATION ==========
 let cryptoData = {
   BTC: {
     name: 'Bitcoin',
@@ -290,7 +294,6 @@ let cryptoData = {
     color: '#f7931a',
     volatility: 0.02
   },
-
   ETH: {
     name: 'Ethereum',
     price: 2315.42,
@@ -299,7 +302,6 @@ let cryptoData = {
     color: '#627eea',
     volatility: 0.03
   },
-
   BNB: {
     name: 'Binance Coin',
     price: 312.50,
@@ -308,7 +310,6 @@ let cryptoData = {
     color: '#f3ba2f',
     volatility: 0.025
   },
-
   SOL: {
     name: 'Solana',
     price: 102.84,
@@ -317,7 +318,6 @@ let cryptoData = {
     color: '#14f195',
     volatility: 0.045
   },
-
   XRP: {
     name: 'Ripple',
     price: 0.62,
@@ -326,7 +326,6 @@ let cryptoData = {
     color: '#23292f',
     volatility: 0.04
   },
-
   ADA: {
     name: 'Cardano',
     price: 0.47,
@@ -335,7 +334,6 @@ let cryptoData = {
     color: '#0033ad',
     volatility: 0.035
   },
-
   DOGE: {
     name: 'Dogecoin',
     price: 0.086,
@@ -344,7 +342,6 @@ let cryptoData = {
     color: '#c2a633',
     volatility: 0.05
   },
-
   SHIB: {
     name: 'Shiba Inu',
     price: 0.000021,
@@ -353,7 +350,6 @@ let cryptoData = {
     color: '#ff4d00',
     volatility: 0.07
   },
-
   MATIC: {
     name: 'Polygon',
     price: 0.89,
@@ -362,7 +358,6 @@ let cryptoData = {
     color: '#8247e5',
     volatility: 0.04
   },
-
   AVAX: {
     name: 'Avalanche',
     price: 34.18,
@@ -371,7 +366,6 @@ let cryptoData = {
     color: '#e84142',
     volatility: 0.045
   },
-
   TON: {
     name: 'Toncoin',
     price: 2.35,
@@ -380,7 +374,6 @@ let cryptoData = {
     color: '#0098ea',
     volatility: 0.03
   },
-
   PEPE: {
     name: 'Pepe',
     price: 0.0000013,
@@ -391,9 +384,11 @@ let cryptoData = {
   }
 };
 
+// REMOVE the duplicate updateMarketPrices() function at line 109-122
+// Keep only this one function:
 
-// Simulate market updates
-function updateMarketPrices() {
+// Update market prices and save to database
+async function updateMarketPrices() {
   for (const coin in cryptoData) {
     const volatility = cryptoData[coin].volatility || 0.02;
     const changePercent = (Math.random() * volatility * 2) - volatility;
@@ -401,14 +396,21 @@ function updateMarketPrices() {
     cryptoData[coin].price = cryptoData[coin].price * (1 + changePercent);
     cryptoData[coin].change = parseFloat((changePercent * 100).toFixed(2));
     cryptoData[coin].volume = cryptoData[coin].volume * (1 + Math.random() * 0.1 - 0.05);
+    
+    // Save to database
+    try {
+      await dbQuery.run(
+        'INSERT INTO price_history (symbol, price) VALUES (?, ?)',
+        [coin, cryptoData[coin].price]
+      );
+    } catch (error) {
+      console.error('Failed to save price history:', error);
+    }
   }
   
   // Broadcast update to all connected clients
   io.emit('market_update', cryptoData);
 }
-
-// Update prices every 3 seconds
-setInterval(updateMarketPrices, 3000);
 
 // ========== HELPER FUNCTIONS ==========
 async function createNotification(userId, type, title, message, data = {}) {
@@ -433,7 +435,6 @@ async function createNotification(userId, type, title, message, data = {}) {
     return false;
   }
 }
-
 // ========== API ROUTES ==========
 // Add Google OAuth client configuration (use your actual Google Client ID)
 const GOOGLE_CLIENT_ID = '960526558312-gijpb2ergfdaco08e8et34vlqjr09o36.apps.googleusercontent.com';
@@ -1105,39 +1106,51 @@ app.post('/api/admin/transactions/:id/approve', authenticateAdmin, async (req, r
 // GET /api/market/data - Real market data
 app.get('/api/market/data', authenticateToken, async (req, res) => {
   try {
-    // Get latest prices from database if available
-    const priceHistory = await dbQuery.all(
-      `SELECT ph.* FROM price_history ph 
-       INNER JOIN (
-         SELECT symbol, MAX(timestamp) as max_time 
-         FROM price_history 
-         GROUP BY symbol
-       ) latest ON ph.symbol = latest.symbol AND ph.timestamp = latest.max_time`
-    );
-    
-    // If no history in DB, use simulated data
-    if (priceHistory.length === 0) {
-      return res.json(cryptoData);
-    }
-    
-    // Combine with cryptoData for full info
+    const ALL_COINS = ['BTC','ETH','DOGE','SHIB','ADA','SOL','XRP','BNB','MATIC','AVAX','TON','PEPE'];
+
+    // Get latest prices
+    const priceHistory = await dbQuery.all(`
+      SELECT ph.* FROM price_history ph 
+      INNER JOIN (
+        SELECT symbol, MAX(timestamp) as max_time 
+        FROM price_history 
+        GROUP BY symbol
+      ) latest 
+      ON ph.symbol = latest.symbol AND ph.timestamp = latest.max_time
+    `);
+
     const result = {};
+
+    // Convert DB results into object
     priceHistory.forEach(ph => {
-      const coinInfo = cryptoData[ph.symbol] || {
-        name: ph.symbol,
-        change: 0,
-        volume: 1000000,
-        color: '#00f0ff',
-        volatility: 0.02
-      };
-      
+      const coinInfo = cryptoData[ph.symbol] || {};
+
       result[ph.symbol] = {
-        ...coinInfo,
-        price: ph.price
+        name: ph.symbol,
+        price: ph.price,
+        change: coinInfo.change || 0,
+        volume: coinInfo.volume || 1000000,
+        color: coinInfo.color || '#00f0ff',
+        volatility: coinInfo.volatility || 0.02
       };
     });
-    
+
+    // Fill missing coins automatically (simulation fallback)
+    ALL_COINS.forEach(symbol => {
+      if (!result[symbol]) {
+        result[symbol] = {
+          name: symbol,
+          price: Math.random() * 100,
+          change: (Math.random() - 0.5) * 10,
+          volume: Math.random() * 1000000000,
+          color: `#${Math.floor(Math.random()*16777215).toString(16)}`,
+          volatility: 0.02 + Math.random() * 0.03
+        };
+      }
+    });
+
     res.json(result);
+
   } catch (error) {
     console.error('Market data error:', error);
     res.status(500).json({ error: 'Failed to fetch market data' });
@@ -1807,13 +1820,18 @@ io.on('connection', (socket) => {
       );
       
       // Broadcast to all clients
-      io.emit('receive_message', {
+      const messageObj = {
         id: result.id,
         userId: data.userId,
         username: data.username,
         message: data.message,
         timestamp: new Date().toISOString()
-      });
+      };
+      
+      // Emit to all clients - both events for compatibility
+      io.emit('receive_message', messageObj);
+      io.emit('new_chat_message', messageObj);
+      
     } catch (error) {
       console.error('Chat error:', error);
     }
