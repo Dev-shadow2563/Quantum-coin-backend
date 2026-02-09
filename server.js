@@ -1331,8 +1331,7 @@ app.post('/api/trade', authenticateToken, async (req, res) => {
 app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res) => {
   try {
     const { coin, timeframe } = req.params;
-    
-    // Timeframe configurations
+
     const intervals = {
       '1h': { hours: 1, interval: 60000 },
       '1d': { hours: 24, interval: 3600000 },
@@ -1340,49 +1339,34 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
       '1m': { hours: 720, interval: 86400000 },
       '1y': { hours: 8760, interval: 2592000000 }
     };
-    
+
     const config = intervals[timeframe] || intervals['1d'];
-    
-    // Check if coin exists
+
     const coinData = cryptoData[coin];
-    if (!coinData) {
-      return res.status(404).json({ error: 'Coin not found' });
-    }
-    
-    // Try to get real data
+    if (!coinData) return res.status(404).json({ error: 'Coin not found' });
+
     let chartData = [];
-    
+
     try {
       const rawData = await dbQuery.all(
-        `SELECT timestamp, price 
-         FROM price_history 
-         WHERE symbol = ? 
-           AND timestamp >= datetime('now', ?) 
+        `SELECT timestamp, price
+         FROM price_history
+         WHERE symbol = ?
+           AND timestamp >= datetime('now', ?)
          ORDER BY timestamp ASC`,
         [coin, `-${config.hours} hours`]
       );
-      
+
       if (rawData.length > 0) {
-        // Group data by time intervals
-        const groupedData = {};
-        rawData.forEach(row => {
-          const time = new Date(row.timestamp);
-          let key;
-          
-          if (config.hours <= 24) {
-            // For short timeframes, group by minutes
-            key = `${time.getHours()}:${Math.floor(time.getMinutes() / 5) * 5}`;
-          } else {
-            // For longer timeframes, group by days
-            key = `${time.getFullYear()}-${time.getMonth()+1}-${time.getDate()}`;
-          }
-          
-          if (!groupedData[key]) groupedData[key] = [];
-          groupedData[key].push(row.price);
+        const grouped = {};
+
+        rawData.forEach(r => {
+          const t = new Date(r.timestamp).toISOString();
+          if (!grouped[t]) grouped[t] = [];
+          grouped[t].push(r.price);
         });
-        
-        // Convert to OHLC format
-        chartData = Object.entries(groupedData).map(([time, prices]) => ({
+
+        chartData = Object.entries(grouped).map(([time, prices]) => ({
           time,
           open: prices[0],
           high: Math.max(...prices),
@@ -1390,49 +1374,40 @@ app.get('/api/market/chart/:coin/:timeframe', authenticateToken, async (req, res
           close: prices[prices.length - 1]
         }));
       }
-    } catch (dbError) {
-      console.log('Using simulated chart data due to DB error:', dbError.message);
+
+    } catch (e) {
+      console.log('DB error, using simulated data');
     }
-    
-    // If no data from DB, generate simulated data
+
+    // fallback simulated candles
     if (chartData.length === 0) {
-      const points = config.hours <= 24 ? 60 : 30; // Number of data points
-      let currentPrice = coinData.price;
-      
-      for (let i = points; i >= 0; i--) {
-        const timeOffset = config.interval * i;
-        const time = new Date(Date.now() - timeOffset);
-        
-        // Random price movement
-        const change = (Math.random() - 0.5) * (coinData.volatility || 0.02) * 2;
-        const open = currentPrice;
+      let price = coinData.price;
+
+      for (let i = 60; i >= 0; i--) {
+        const time = new Date(Date.now() - config.interval * i);
+
+        const change = (Math.random() - 0.5) * 0.02;
+
+        const open = price;
         const close = open * (1 + change);
-        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-        
+
         chartData.push({
           time: time.toISOString(),
-          open: parseFloat(open.toFixed(2)),
-          high: parseFloat(high.toFixed(2)),
-          low: parseFloat(low.toFixed(2)),
-          close: parseFloat(close.toFixed(2))
+          open,
+          high: Math.max(open, close),
+          low: Math.min(open, close),
+          close
         });
-        
-        currentPrice = close;
+
+        price = close;
       }
     }
-    
-    // Sort by time
-    chartData.sort((a, b) => new Date(a.time) - new Date(b.time));
-    
+
     res.json(chartData);
-    
-  } catch (error) {
-    console.error('Chart endpoint error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch chart data',
-      message: error.message 
-    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Chart failed' });
   }
 });
 
