@@ -1854,7 +1854,8 @@ app.use((err, req, res, next) => {
 
 // ========== INITIALIZE AND START SERVER ==========
 initDatabase();
-
+  initializeSampleData();
+  const PORT = process.env.PORT || 10000;
 // Clean up old sessions every hour
 setInterval(() => {
   const now = Date.now();
