@@ -1868,7 +1868,6 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log(`🚀 QuantumCoin API with Admin Panel running on port ${PORT}`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
