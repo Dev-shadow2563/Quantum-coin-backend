@@ -678,6 +678,67 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
+// Add this after the other transaction routes
+app.post('/api/transactions/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    
+    if (amount < 10) {
+      return res.status(400).json({ error: 'Minimum deposit is $10' });
+    }
+    
+    // Calculate bonus
+    const bonus = amount >= 1000 ? amount * 0.05 : 0;
+    
+    // Create deposit transaction
+    const result = await dbQuery.run(
+      `INSERT INTO transactions (user_id, username, type, amount, bonus, status, created_at)
+       VALUES (?, ?, 'deposit', ?, ?, 'pending', CURRENT_TIMESTAMP)`,
+      [req.user.id, req.user.username, amount, bonus]
+    );
+    
+    // Create notification for user
+    await createNotification(
+      req.user.id,
+      'info',
+      'Deposit Requested 💰',
+      `Your deposit request of $${amount.toFixed(2)} has been received and is pending admin approval.`,
+      { 
+        transactionId: result.id,
+        amount: amount,
+        bonus: bonus,
+        action: 'view_transaction'
+      }
+    );
+    
+    // Notify admins
+    io.to('admin_room').emit('new_deposit_request', {
+      transactionId: result.id,
+      username: req.user.username,
+      amount: amount,
+      bonus: bonus,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({
+      success: true,
+      message: 'Deposit request submitted successfully',
+      transactionId: result.id,
+      amount: amount,
+      bonus: bonus,
+      total: amount + bonus
+    });
+    
+  } catch (error) {
+    console.error('Deposit endpoint error:', error);
+    res.status(500).json({ error: 'Failed to create deposit request' });
+  }
+});
+
 // POST /api/auth/logout - Logout user
 app.post('/api/auth/logout', authenticateToken, (req, res) => {
   try {
